@@ -34,6 +34,12 @@ from graphweaver_agent.business_rules import (
     import_lineage_to_neo4j, generate_sample_rules,
 )
 
+# RDF imports
+from graphweaver_agent.rdf import (
+    FusekiClient, RDFSyncManager, sync_neo4j_to_rdf,
+    GraphWeaverOntology, SPARQLQueryBuilder, PREFIXES_SPARQL
+)
+
 # =============================================================================
 # Global Connections
 # =============================================================================
@@ -43,6 +49,8 @@ _neo4j: Optional[Neo4jClient] = None
 _pg_config: Optional[DataSourceConfig] = None
 _text_embedder = None
 _kg_embedder = None
+_fuseki: Optional[FusekiClient] = None
+_sparql: Optional[SPARQLQueryBuilder] = None
 
 
 def get_pg() -> PostgreSQLConnector:
@@ -85,6 +93,20 @@ def get_kg_embedder():
         from graphweaver_agent.embeddings.kg_embeddings import KGEmbedder
         _kg_embedder = KGEmbedder(get_neo4j())
     return _kg_embedder
+
+
+def get_fuseki() -> FusekiClient:
+    global _fuseki
+    if _fuseki is None:
+        _fuseki = FusekiClient()
+    return _fuseki
+
+
+def get_sparql() -> SPARQLQueryBuilder:
+    global _sparql
+    if _sparql is None:
+        _sparql = SPARQLQueryBuilder(get_fuseki())
+    return _sparql
 
 
 # =============================================================================
@@ -1335,6 +1357,367 @@ def find_impact_analysis(table_name: str) -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
+# =============================================================================
+# RDF Tools
+# =============================================================================
+
+@tool
+def test_rdf_connection() -> str:
+    """Test connection to the RDF triple store (Apache Jena Fuseki).
+    
+    Returns connection status and dataset info.
+    """
+    try:
+        fuseki = get_fuseki()
+        result = fuseki.test_connection()
+        
+        if result["success"]:
+            # Get triple count
+            count = fuseki.get_triple_count()
+            return f"✓ Connected to Fuseki RDF store\n  Dataset: {fuseki.config.dataset}\n  Triples: {count}"
+        else:
+            return f"✗ Connection failed: {result.get('error')}"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sync_graph_to_rdf() -> str:
+    """Synchronize the entire Neo4j graph to the RDF triple store.
+    
+    This exports all:
+    - Tables and columns
+    - Foreign key relationships
+    - Jobs and datasets (lineage)
+    - Dataset-table links
+    
+    The RDF store uses standard ontologies (DCAT, PROV-O, Dublin Core)
+    for interoperability with other data catalog systems.
+    """
+    try:
+        print("[sync_graph_to_rdf] Starting sync...")
+        
+        fuseki = get_fuseki()
+        neo4j = get_neo4j()
+        
+        # Ensure dataset exists
+        fuseki.ensure_dataset_exists()
+        
+        # Run sync
+        stats = sync_neo4j_to_rdf(neo4j, fuseki)
+        
+        print(f"[sync_graph_to_rdf] Done: {stats}")
+        
+        if "error" in stats:
+            return f"ERROR: {stats['error']}"
+        
+        output = "## RDF Sync Complete\n\n"
+        output += f"- Tables synced: {stats.get('tables', 0)}\n"
+        output += f"- Columns synced: {stats.get('columns', 0)}\n"
+        output += f"- Foreign keys synced: {stats.get('fks', 0)}\n"
+        output += f"- Jobs synced: {stats.get('jobs', 0)}\n"
+        output += f"- Datasets synced: {stats.get('datasets', 0)}\n"
+        output += f"- Dataset-table links: {stats.get('links', 0)}\n"
+        output += f"- **Total triples: {stats.get('total_triples', 0)}**\n"
+        output += "\nYou can now query the RDF store with SPARQL or access it at http://localhost:3030"
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR syncing to RDF: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def run_sparql(query: str) -> str:
+    """Run a custom SPARQL query on the RDF store.
+    
+    The graph uses these prefixes:
+    - gw: <http://graphweaver.io/ontology#> (GraphWeaver vocabulary)
+    - gwdata: <http://graphweaver.io/data#> (instance data)
+    - dcat: <http://www.w3.org/ns/dcat#> (Data Catalog)
+    - prov: <http://www.w3.org/ns/prov#> (Provenance)
+    - dct: <http://purl.org/dc/terms/> (Dublin Core)
+    
+    Example queries:
+    - SELECT ?table ?label WHERE { ?table a gw:Table ; rdfs:label ?label }
+    - SELECT ?col WHERE { ?col gw:belongsToTable ?table . ?table rdfs:label "orders" }
+    
+    Args:
+        query: SPARQL SELECT query
+    """
+    try:
+        print(f"[run_sparql] Executing query...")
+        
+        sparql = get_sparql()
+        results = sparql.custom_query(query)
+        
+        if not results:
+            return "Query executed. No results returned."
+        
+        output = f"Results ({len(results)} rows):\n"
+        for i, row in enumerate(results[:50]):
+            output += f"  {row}\n"
+        if len(results) > 50:
+            output += f"  ... and {len(results) - 50} more rows"
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR executing SPARQL: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def sparql_list_tables() -> str:
+    """List all tables in the RDF store with column counts."""
+    try:
+        sparql = get_sparql()
+        results = sparql.list_tables()
+        
+        if not results:
+            return "No tables found. Run sync_graph_to_rdf first."
+        
+        output = "## Tables in RDF Store\n\n"
+        for r in results:
+            label = r.get("label", "?")
+            cols = r.get("columnCount", 0)
+            rows = r.get("rowCount", "?")
+            output += f"- **{label}**: {cols} columns, {rows} rows\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sparql_get_foreign_keys(table_name: str = None) -> str:
+    """Get foreign key relationships from RDF store.
+    
+    Args:
+        table_name: Optional - filter by table name
+    """
+    try:
+        sparql = get_sparql()
+        results = sparql.get_foreign_keys(table_name)
+        
+        if not results:
+            return f"No foreign keys found{' for ' + table_name if table_name else ''}."
+        
+        output = f"## Foreign Keys{' for ' + table_name if table_name else ''}\n\n"
+        for r in results:
+            src = f"{r.get('sourceTableLabel')}.{r.get('sourceColLabel')}"
+            tgt = f"{r.get('targetTableLabel')}.{r.get('targetColLabel')}"
+            score = r.get("score", "?")
+            card = r.get("cardinality", "?")
+            output += f"- **{src}** → **{tgt}** (score: {score}, cardinality: {card})\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sparql_table_lineage(table_name: str) -> str:
+    """Get lineage for a table from RDF store - what jobs read/write it.
+    
+    Args:
+        table_name: Name of the table
+    """
+    try:
+        sparql = get_sparql()
+        results = sparql.get_table_lineage(table_name)
+        
+        if not results:
+            return f"No lineage found for '{table_name}'."
+        
+        output = f"## Lineage for {table_name}\n\n"
+        
+        reads = [r for r in results if r.get("direction") == "reads"]
+        writes = [r for r in results if r.get("direction") == "writes"]
+        
+        if reads:
+            output += "### Jobs that READ this table:\n"
+            for r in reads:
+                output += f"  - {r.get('jobLabel')}\n"
+        
+        if writes:
+            output += "\n### Jobs that WRITE to this table:\n"
+            for r in writes:
+                output += f"  - {r.get('jobLabel')}\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sparql_downstream_impact(table_name: str) -> str:
+    """Find downstream impact - what depends on this table (via RDF/SPARQL).
+    
+    Uses SPARQL to traverse both FK relationships and lineage.
+    
+    Args:
+        table_name: Name of the table to analyze
+    """
+    try:
+        sparql = get_sparql()
+        results = sparql.get_downstream_impact(table_name)
+        
+        if not results:
+            return f"No downstream dependencies found for '{table_name}'."
+        
+        output = f"## Downstream Impact: {table_name}\n\n"
+        
+        fk_deps = [r for r in results if r.get("relationshipType") == "FK_REFERENCE"]
+        lineage_deps = [r for r in results if r.get("relationshipType") == "LINEAGE"]
+        
+        if fk_deps:
+            output += "### Tables referencing via FK:\n"
+            for r in fk_deps:
+                output += f"  - {r.get('dependentTableLabel')}\n"
+        
+        if lineage_deps:
+            output += "\n### Downstream via data lineage:\n"
+            for r in lineage_deps:
+                output += f"  - {r.get('dependentTableLabel')}\n"
+        
+        output += f"\n**Total dependencies: {len(results)}**"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sparql_hub_tables(min_connections: int = 2) -> str:
+    """Find hub tables with many connections (via RDF/SPARQL).
+    
+    Args:
+        min_connections: Minimum connections to be considered a hub
+    """
+    try:
+        sparql = get_sparql()
+        results = sparql.get_hub_tables(min_connections)
+        
+        if not results:
+            return f"No hub tables found with >= {min_connections} connections."
+        
+        output = f"## Hub Tables (>= {min_connections} connections)\n\n"
+        for r in results:
+            label = r.get("label")
+            in_fks = r.get("incomingFKs", 0)
+            out_fks = r.get("outgoingFKs", 0)
+            reads = r.get("readByJobs", 0)
+            total = r.get("totalConnections", 0)
+            output += f"- **{label}**: {total} total (in:{in_fks}, out:{out_fks}, reads:{reads})\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sparql_orphan_tables() -> str:
+    """Find tables with no FK relationships (via RDF/SPARQL)."""
+    try:
+        sparql = get_sparql()
+        results = sparql.find_orphan_tables()
+        
+        if not results:
+            return "No orphan tables found - all tables have relationships."
+        
+        output = "## Orphan Tables (no FK relationships)\n\n"
+        for r in results:
+            output += f"- {r.get('label')}\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def sparql_search(search_term: str) -> str:
+    """Search the RDF graph by label.
+    
+    Searches across tables, columns, jobs, and datasets.
+    
+    Args:
+        search_term: Text to search for in labels
+    """
+    try:
+        sparql = get_sparql()
+        results = sparql.search_by_label(search_term)
+        
+        if not results:
+            return f"No results found for '{search_term}'."
+        
+        output = f"## Search results for '{search_term}'\n\n"
+        
+        # Group by type
+        by_type = {}
+        for r in results:
+            rtype = r.get("type", "").split("#")[-1]
+            if rtype not in by_type:
+                by_type[rtype] = []
+            by_type[rtype].append(r.get("label"))
+        
+        for rtype, labels in by_type.items():
+            output += f"### {rtype}s:\n"
+            for label in labels:
+                output += f"  - {label}\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def get_rdf_statistics() -> str:
+    """Get statistics from the RDF store."""
+    try:
+        fuseki = get_fuseki()
+        sparql = get_sparql()
+        
+        # Get triple count
+        triple_count = fuseki.get_triple_count("http://graphweaver.io/graph/main")
+        
+        # Get entity counts
+        stats = sparql.get_statistics()
+        
+        output = "## RDF Store Statistics\n\n"
+        output += f"- Total triples: {triple_count}\n"
+        output += f"- Tables: {stats.get('tables', 0)}\n"
+        output += f"- Columns: {stats.get('columns', 0)}\n"
+        output += f"- Foreign Keys: {stats.get('foreignKeys', 0)}\n"
+        output += f"- Jobs: {stats.get('jobs', 0)}\n"
+        output += f"- Datasets: {stats.get('datasets', 0)}\n"
+        output += f"\nFuseki UI: http://localhost:3030"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+@tool
+def export_rdf_turtle() -> str:
+    """Export the graph ontology in Turtle format.
+    
+    Returns the GraphWeaver ontology definition.
+    """
+    try:
+        ontology = GraphWeaverOntology.get_ontology_turtle()
+        
+        output = "## GraphWeaver Ontology (Turtle format)\n\n"
+        output += "```turtle\n"
+        output += ontology[:3000]  # Truncate for display
+        if len(ontology) > 3000:
+            output += "\n... (truncated)"
+        output += "\n```"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
 SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users discover foreign key relationships, execute business rules, capture data lineage, and perform semantic search on database metadata.
 
 ## Your Capabilities:
@@ -1385,6 +1768,20 @@ SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users 
 - `analyze_data_flow` - Full analysis (FKs + lineage)
 - `find_impact_analysis` - What breaks if table changes?
 
+### RDF / SPARQL
+- `test_rdf_connection` - Test connection to Fuseki triple store
+- `sync_graph_to_rdf` - Sync Neo4j graph to RDF store
+- `run_sparql` - Execute custom SPARQL queries
+- `sparql_list_tables` - List tables via SPARQL
+- `sparql_get_foreign_keys` - Get FKs via SPARQL
+- `sparql_table_lineage` - Get lineage via SPARQL
+- `sparql_downstream_impact` - Find downstream deps via SPARQL
+- `sparql_hub_tables` - Find hub tables via SPARQL
+- `sparql_orphan_tables` - Find orphan tables
+- `sparql_search` - Search graph by label
+- `get_rdf_statistics` - RDF store stats
+- `export_rdf_turtle` - Export ontology
+
 ## Typical Workflow:
 
 1. **Discover FKs**: `run_fk_discovery`
@@ -1395,7 +1792,8 @@ SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users 
 6. **Execute rules**: `execute_all_business_rules` (captures lineage)
 7. **Import lineage**: `import_lineage_to_graph`
 8. **Connect graphs**: `connect_datasets_to_tables`
-9. **Analyze**: `semantic_search_tables`, `find_similar_tables`, `find_impact_analysis`
+9. **Sync to RDF**: `sync_graph_to_rdf`
+10. **Analyze**: `semantic_search_tables`, `find_similar_tables`, `find_impact_analysis`
 
 ## Embedding-Powered Features:
 
@@ -1408,6 +1806,13 @@ SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users 
 - Find structurally similar nodes in the graph
 - Predict missing FKs based on graph topology
 - Discover hidden relationships
+
+## RDF/SPARQL Features:
+
+- Standard ontologies: DCAT, PROV-O, Dublin Core
+- Interoperability with other data catalogs
+- SPARQL queries for complex traversals
+- Fuseki UI at http://localhost:3030
 
 Be helpful and thorough!"""
 
@@ -1470,6 +1875,20 @@ def create_agent(verbose: bool = True):
         import_lineage_to_graph,
         analyze_data_flow,
         find_impact_analysis,
+        
+        # RDF Tools
+        test_rdf_connection,
+        sync_graph_to_rdf,
+        run_sparql,
+        sparql_list_tables,
+        sparql_get_foreign_keys,
+        sparql_table_lineage,
+        sparql_downstream_impact,
+        sparql_hub_tables,
+        sparql_orphan_tables,
+        sparql_search,
+        get_rdf_statistics,
+        export_rdf_turtle,
     ]
     
     agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
@@ -1534,6 +1953,7 @@ def run_interactive():
     print("  • 'load business rules from file and execute them'")
     print("  • 'generate embeddings and search for customer columns'")
     print("  • 'find tables similar to orders'")
+    print("  • 'sync graph to RDF and run SPARQL queries'")
     print("\nType 'quit' to exit.\n")
     sys.stdout.flush()
     
