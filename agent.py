@@ -40,6 +40,20 @@ from graphweaver_agent.rdf import (
     GraphWeaverOntology, SPARQLQueryBuilder, PREFIXES_SPARQL
 )
 
+# LTN imports
+try:
+    from graphweaver_agent.ltn import (
+        LTNRuleLearner,
+        BusinessRuleGenerator,
+        LTNKnowledgeBase,
+        LearnedRule,
+        GeneratedRule,
+        RuleLearningConfig,
+    )
+    LTN_AVAILABLE = True
+except ImportError:
+    LTN_AVAILABLE = False
+
 # =============================================================================
 # Global Connections
 # =============================================================================
@@ -51,6 +65,8 @@ _text_embedder = None
 _kg_embedder = None
 _fuseki: Optional[FusekiClient] = None
 _sparql: Optional[SPARQLQueryBuilder] = None
+_rule_learner = None
+_rule_generator = None
 
 
 def get_pg() -> PostgreSQLConnector:
@@ -107,6 +123,29 @@ def get_sparql() -> SPARQLQueryBuilder:
     if _sparql is None:
         _sparql = SPARQLQueryBuilder(get_fuseki())
     return _sparql
+
+
+def get_rule_learner():
+    global _rule_learner
+    if _rule_learner is None:
+        if not LTN_AVAILABLE:
+            return None
+        config = RuleLearningConfig(
+            embedding_dim=384,  # Match text embedding dim
+            use_text_embeddings=True,
+            use_kg_embeddings=True,
+        )
+        _rule_learner = LTNRuleLearner(get_neo4j(), config)
+    return _rule_learner
+
+
+def get_rule_generator():
+    global _rule_generator
+    if _rule_generator is None:
+        if not LTN_AVAILABLE:
+            return None
+        _rule_generator = BusinessRuleGenerator(get_neo4j())
+    return _rule_generator
 
 
 # =============================================================================
@@ -1718,6 +1757,298 @@ def export_rdf_turtle() -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
+# =============================================================================
+# LTN Tools - Logic Tensor Networks for Rule Learning
+# =============================================================================
+
+@tool
+def learn_rules_with_ltn() -> str:
+    """Learn logical rules from the knowledge graph using LTN.
+    
+    This uses Logic Tensor Networks to:
+    - Learn FK patterns from graph structure
+    - Identify table classifications (fact, dimension, junction)
+    - Discover column naming patterns
+    - Extract logical constraints
+    
+    Requires text embeddings to be generated first.
+    """
+    try:
+        if not LTN_AVAILABLE:
+            return "LTN not available. Install with: pip install ltn tensorflow"
+        
+        print("[learn_rules_with_ltn] Starting rule learning...")
+        
+        learner = get_rule_learner()
+        if learner is None:
+            return "LTN not available. Install with: pip install ltn tensorflow"
+        
+        learned_rules = learner.learn_rules()
+        
+        if not learned_rules:
+            return "No rules learned. Make sure you have FK discovery results and embeddings generated."
+        
+        output = f"## Learned {len(learned_rules)} Rules with LTN\n\n"
+        
+        # Group by type
+        by_type = {}
+        for rule in learned_rules:
+            rtype = rule.rule_type
+            if rtype not in by_type:
+                by_type[rtype] = []
+            by_type[rtype].append(rule)
+        
+        for rtype, rules in by_type.items():
+            output += f"### {rtype.title()} Rules:\n"
+            for rule in rules:
+                output += f"- **{rule.name}**: `{rule.formula}`\n"
+                output += f"  Confidence: {rule.confidence:.2f}, Support: {rule.support}\n"
+                if rule.description:
+                    output += f"  {rule.description}\n"
+            output += "\n"
+        
+        output += "\nUse `generate_business_rules_from_ltn` to convert these to executable SQL rules."
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR learning rules: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def generate_business_rules_from_ltn() -> str:
+    """Generate executable business rules from learned LTN patterns.
+    
+    Converts learned rules into:
+    - SQL validation queries
+    - Data quality checks
+    - Aggregation rules
+    
+    Run learn_rules_with_ltn first to learn patterns.
+    """
+    try:
+        if not LTN_AVAILABLE:
+            return "LTN not available. Install with: pip install ltn tensorflow"
+        
+        print("[generate_business_rules_from_ltn] Generating rules...")
+        
+        learner = get_rule_learner()
+        generator = get_rule_generator()
+        
+        if learner is None or generator is None:
+            return "LTN not available. Install with: pip install ltn tensorflow"
+        
+        # Get learned rules
+        learned_rules = learner.get_learned_rules()
+        
+        if not learned_rules:
+            # Learn rules first
+            learned_rules = learner.learn_rules()
+        
+        if not learned_rules:
+            return "No learned rules available. Run learn_rules_with_ltn first."
+        
+        # Generate business rules
+        generated_rules = generator.generate_from_learned_rules(learned_rules)
+        
+        if not generated_rules:
+            return "No business rules generated."
+        
+        output = f"## Generated {len(generated_rules)} Business Rules\n\n"
+        
+        # Group by type
+        by_type = {}
+        for rule in generated_rules:
+            rtype = rule.rule_type
+            if rtype not in by_type:
+                by_type[rtype] = []
+            by_type[rtype].append(rule)
+        
+        for rtype, rules in by_type.items():
+            output += f"### {rtype.title()} Rules ({len(rules)}):\n"
+            for rule in rules[:5]:  # Show first 5 per type
+                output += f"- **{rule.name}**\n"
+                output += f"  {rule.description}\n"
+                output += f"  Inputs: {', '.join(rule.inputs)}\n"
+            if len(rules) > 5:
+                output += f"  ... and {len(rules) - 5} more\n"
+            output += "\n"
+        
+        output += "\nUse `export_generated_rules_yaml` to export as YAML file."
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR generating rules: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def generate_all_validation_rules() -> str:
+    """Generate all possible validation rules from the Neo4j graph.
+    
+    Creates rules for:
+    - FK referential integrity checks
+    - PK uniqueness validation
+    - Row count metrics
+    
+    Does not require LTN - uses graph structure directly.
+    """
+    try:
+        if not LTN_AVAILABLE:
+            return "LTN module not available. Install with: pip install ltn tensorflow"
+        
+        print("[generate_all_validation_rules] Generating all rules...")
+        
+        generator = get_rule_generator()
+        if generator is None:
+            return "Rule generator not available."
+        
+        all_rules = generator.generate_all_rules()
+        
+        if not all_rules:
+            return "No rules generated. Make sure FK discovery has been run."
+        
+        output = f"## Generated {len(all_rules)} Validation Rules\n\n"
+        
+        # Group by type
+        by_type = {}
+        for rule in all_rules:
+            rtype = rule.rule_type
+            if rtype not in by_type:
+                by_type[rtype] = []
+            by_type[rtype].append(rule)
+        
+        for rtype, rules in by_type.items():
+            output += f"### {rtype.title()} Rules ({len(rules)}):\n"
+            for rule in rules:
+                output += f"- **{rule.name}**: {rule.description}\n"
+            output += "\n"
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def export_generated_rules_yaml() -> str:
+    """Export generated business rules as YAML.
+    
+    Creates a business_rules_generated.yaml file that can be used with
+    load_business_rules_from_file and execute_all_business_rules.
+    """
+    try:
+        if not LTN_AVAILABLE:
+            return "LTN module not available."
+        
+        generator = get_rule_generator()
+        if generator is None:
+            return "Rule generator not available."
+        
+        if not generator.generated_rules:
+            # Generate rules first
+            generator.generate_all_rules()
+        
+        if not generator.generated_rules:
+            return "No rules to export. Run generate_business_rules_from_ltn first."
+        
+        yaml_content = generator.export_yaml()
+        
+        # Save to file
+        filename = "business_rules_generated.yaml"
+        with open(filename, "w") as f:
+            f.write(yaml_content)
+        
+        output = f"## Exported {len(generator.generated_rules)} Rules to {filename}\n\n"
+        output += "```yaml\n"
+        output += yaml_content[:2000]
+        if len(yaml_content) > 2000:
+            output += "\n... (truncated)"
+        output += "\n```\n"
+        output += f"\nLoad with: `load_business_rules_from_file business_rules_generated.yaml`"
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def export_generated_rules_sql() -> str:
+    """Export generated rules as SQL script.
+    
+    Creates a validation_rules.sql file with all validation queries.
+    """
+    try:
+        if not LTN_AVAILABLE:
+            return "LTN module not available."
+        
+        generator = get_rule_generator()
+        if generator is None:
+            return "Rule generator not available."
+        
+        if not generator.generated_rules:
+            generator.generate_all_rules()
+        
+        if not generator.generated_rules:
+            return "No rules to export."
+        
+        sql_content = generator.export_sql()
+        
+        # Save to file
+        filename = "validation_rules.sql"
+        with open(filename, "w") as f:
+            f.write(sql_content)
+        
+        output = f"## Exported SQL to {filename}\n\n"
+        output += "```sql\n"
+        output += sql_content[:2000]
+        if len(sql_content) > 2000:
+            output += "\n... (truncated)"
+        output += "\n```"
+        
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+
+
+@tool
+def show_ltn_knowledge_base() -> str:
+    """Show the LTN knowledge base with axioms and constraints.
+    
+    Displays the logical rules and constraints used for reasoning.
+    """
+    try:
+        if not LTN_AVAILABLE:
+            return "LTN not available. Install with: pip install ltn tensorflow"
+        
+        kb = LTNKnowledgeBase.create_default()
+        
+        output = "## LTN Knowledge Base\n\n"
+        
+        output += "### Axioms (Logical Rules):\n"
+        for axiom in kb.get_all_axioms():
+            output += f"- **{axiom.name}**: `{axiom.formula}`\n"
+            output += f"  Type: {axiom.axiom_type.value}, Weight: {axiom.weight}\n"
+            if axiom.description:
+                output += f"  {axiom.description}\n"
+        
+        output += "\n### Available Predicates:\n"
+        output += "- `IsPK(c)` - Column is primary key\n"
+        output += "- `IsFK(c)` - Column is foreign key\n"
+        output += "- `FK(c1, c2)` - FK relationship between columns\n"
+        output += "- `IsFact(t)` - Table is a fact table\n"
+        output += "- `IsDimension(t)` - Table is a dimension table\n"
+        output += "- `IsJunction(t)` - Table is a junction table\n"
+        output += "- `BelongsTo(c, t)` - Column belongs to table\n"
+        output += "- `SameType(c1, c2)` - Columns have same data type\n"
+        
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
 SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users discover foreign key relationships, execute business rules, capture data lineage, and perform semantic search on database metadata.
 
 ## Your Capabilities:
@@ -1782,18 +2113,29 @@ SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users 
 - `get_rdf_statistics` - RDF store stats
 - `export_rdf_turtle` - Export ontology
 
+### LTN / Rule Learning
+- `learn_rules_with_ltn` - Learn logical rules from graph using LTN
+- `generate_business_rules_from_ltn` - Generate executable rules from learned patterns
+- `generate_all_validation_rules` - Generate all validation rules from graph
+- `export_generated_rules_yaml` - Export rules as YAML file
+- `export_generated_rules_sql` - Export rules as SQL script
+- `show_ltn_knowledge_base` - Show LTN axioms and predicates
+
 ## Typical Workflow:
 
 1. **Discover FKs**: `run_fk_discovery`
 2. **Generate embeddings**: `generate_text_embeddings`, `generate_kg_embeddings`
 3. **Create indexes**: `create_vector_indexes`
 4. **Semantic FK discovery**: `semantic_fk_discovery` (finds FKs missed by name matching)
-5. **Load business rules**: `load_business_rules_from_file`
-6. **Execute rules**: `execute_all_business_rules` (captures lineage)
-7. **Import lineage**: `import_lineage_to_graph`
-8. **Connect graphs**: `connect_datasets_to_tables`
-9. **Sync to RDF**: `sync_graph_to_rdf`
-10. **Analyze**: `semantic_search_tables`, `find_similar_tables`, `find_impact_analysis`
+5. **Learn rules with LTN**: `learn_rules_with_ltn`
+6. **Generate validation rules**: `generate_all_validation_rules`
+7. **Export rules**: `export_generated_rules_yaml`
+8. **Load business rules**: `load_business_rules_from_file`
+9. **Execute rules**: `execute_all_business_rules` (captures lineage)
+10. **Import lineage**: `import_lineage_to_graph`
+11. **Connect graphs**: `connect_datasets_to_tables`
+12. **Sync to RDF**: `sync_graph_to_rdf`
+13. **Analyze**: `semantic_search_tables`, `find_similar_tables`, `find_impact_analysis`
 
 ## Embedding-Powered Features:
 
@@ -1813,6 +2155,14 @@ SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users 
 - Interoperability with other data catalogs
 - SPARQL queries for complex traversals
 - Fuseki UI at http://localhost:3030
+
+## LTN Features:
+
+- Learn logical rules from graph patterns
+- Generate SQL validation queries automatically
+- Discover FK naming patterns
+- Classify tables as fact/dimension/junction
+- Export learned rules as YAML or SQL
 
 Be helpful and thorough!"""
 
@@ -1889,6 +2239,14 @@ def create_agent(verbose: bool = True):
         sparql_search,
         get_rdf_statistics,
         export_rdf_turtle,
+        
+        # LTN Tools
+        learn_rules_with_ltn,
+        generate_business_rules_from_ltn,
+        generate_all_validation_rules,
+        export_generated_rules_yaml,
+        export_generated_rules_sql,
+        show_ltn_knowledge_base,
     ]
     
     agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
@@ -1954,6 +2312,7 @@ def run_interactive():
     print("  • 'generate embeddings and search for customer columns'")
     print("  • 'find tables similar to orders'")
     print("  • 'sync graph to RDF and run SPARQL queries'")
+    print("  • 'learn rules with LTN and generate validation rules'")
     print("\nType 'quit' to exit.\n")
     sys.stdout.flush()
     

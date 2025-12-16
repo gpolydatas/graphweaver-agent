@@ -1,0 +1,600 @@
+version: '1.0'
+namespace: generated
+rules:
+- name: validate_fk_products_category_id
+  description: "Validate products.category_id \u2192 categories.id"
+  type: validation
+  sql: "SELECT products.category_id\nFROM products\nLEFT JOIN categories ON products.category_id\
+    \ = categories.id\nWHERE categories.id IS NULL\n  AND products.category_id IS\
+    \ NOT NULL"
+  inputs:
+  - products
+  - categories
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_orders_customer_id
+  description: "Validate orders.customer_id \u2192 customers.id"
+  type: validation
+  sql: "SELECT orders.customer_id\nFROM orders\nLEFT JOIN customers ON orders.customer_id\
+    \ = customers.id\nWHERE customers.id IS NULL\n  AND orders.customer_id IS NOT\
+    \ NULL"
+  inputs:
+  - orders
+  - customers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_order_id
+  description: "Validate order_items.order_id \u2192 orders.id"
+  type: validation
+  sql: "SELECT order_items.order_id\nFROM order_items\nLEFT JOIN orders ON order_items.order_id\
+    \ = orders.id\nWHERE orders.id IS NULL\n  AND order_items.order_id IS NOT NULL"
+  inputs:
+  - order_items
+  - orders
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_product_id
+  description: "Validate order_items.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT order_items.product_id\nFROM order_items\nLEFT JOIN products ON order_items.product_id\
+    \ = products.id\nWHERE products.id IS NULL\n  AND order_items.product_id IS NOT\
+    \ NULL"
+  inputs:
+  - order_items
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_product_id
+  description: "Validate product_suppliers.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT product_suppliers.product_id\nFROM product_suppliers\nLEFT JOIN products\
+    \ ON product_suppliers.product_id = products.id\nWHERE products.id IS NULL\n \
+    \ AND product_suppliers.product_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_supplier_id
+  description: "Validate product_suppliers.supplier_id \u2192 suppliers.id"
+  type: validation
+  sql: "SELECT product_suppliers.supplier_id\nFROM product_suppliers\nLEFT JOIN suppliers\
+    \ ON product_suppliers.supplier_id = suppliers.id\nWHERE suppliers.id IS NULL\n\
+    \  AND product_suppliers.supplier_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - suppliers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_products_category_id
+  description: "Validate products.category_id \u2192 categories.id"
+  type: validation
+  sql: "SELECT products.category_id\nFROM products\nLEFT JOIN categories ON products.category_id\
+    \ = categories.id\nWHERE categories.id IS NULL\n  AND products.category_id IS\
+    \ NOT NULL"
+  inputs:
+  - products
+  - categories
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_orders_customer_id
+  description: "Validate orders.customer_id \u2192 customers.id"
+  type: validation
+  sql: "SELECT orders.customer_id\nFROM orders\nLEFT JOIN customers ON orders.customer_id\
+    \ = customers.id\nWHERE customers.id IS NULL\n  AND orders.customer_id IS NOT\
+    \ NULL"
+  inputs:
+  - orders
+  - customers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_order_id
+  description: "Validate order_items.order_id \u2192 orders.id"
+  type: validation
+  sql: "SELECT order_items.order_id\nFROM order_items\nLEFT JOIN orders ON order_items.order_id\
+    \ = orders.id\nWHERE orders.id IS NULL\n  AND order_items.order_id IS NOT NULL"
+  inputs:
+  - order_items
+  - orders
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_product_id
+  description: "Validate order_items.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT order_items.product_id\nFROM order_items\nLEFT JOIN products ON order_items.product_id\
+    \ = products.id\nWHERE products.id IS NULL\n  AND order_items.product_id IS NOT\
+    \ NULL"
+  inputs:
+  - order_items
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_product_id
+  description: "Validate product_suppliers.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT product_suppliers.product_id\nFROM product_suppliers\nLEFT JOIN products\
+    \ ON product_suppliers.product_id = products.id\nWHERE products.id IS NULL\n \
+    \ AND product_suppliers.product_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_supplier_id
+  description: "Validate product_suppliers.supplier_id \u2192 suppliers.id"
+  type: validation
+  sql: "SELECT product_suppliers.supplier_id\nFROM product_suppliers\nLEFT JOIN suppliers\
+    \ ON product_suppliers.supplier_id = suppliers.id\nWHERE suppliers.id IS NULL\n\
+    \  AND product_suppliers.supplier_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - suppliers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: count_rows_products
+  description: Count rows in products
+  type: aggregation
+  sql: 'SELECT ''products'' as table_name, COUNT(*) as row_count
+
+    FROM products'
+  inputs:
+  - products
+  outputs:
+  - products_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_categories
+  description: Count rows in categories
+  type: aggregation
+  sql: 'SELECT ''categories'' as table_name, COUNT(*) as row_count
+
+    FROM categories'
+  inputs:
+  - categories
+  outputs:
+  - categories_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_orders
+  description: Count rows in orders
+  type: aggregation
+  sql: 'SELECT ''orders'' as table_name, COUNT(*) as row_count
+
+    FROM orders'
+  inputs:
+  - orders
+  outputs:
+  - orders_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_customers
+  description: Count rows in customers
+  type: aggregation
+  sql: 'SELECT ''customers'' as table_name, COUNT(*) as row_count
+
+    FROM customers'
+  inputs:
+  - customers
+  outputs:
+  - customers_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_order_items
+  description: Count rows in order_items
+  type: aggregation
+  sql: 'SELECT ''order_items'' as table_name, COUNT(*) as row_count
+
+    FROM order_items'
+  inputs:
+  - order_items
+  outputs:
+  - order_items_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_product_suppliers
+  description: Count rows in product_suppliers
+  type: aggregation
+  sql: 'SELECT ''product_suppliers'' as table_name, COUNT(*) as row_count
+
+    FROM product_suppliers'
+  inputs:
+  - product_suppliers
+  outputs:
+  - product_suppliers_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_suppliers
+  description: Count rows in suppliers
+  type: aggregation
+  sql: 'SELECT ''suppliers'' as table_name, COUNT(*) as row_count
+
+    FROM suppliers'
+  inputs:
+  - suppliers
+  outputs:
+  - suppliers_count
+  tags:
+  - aggregation
+  - row_count
+- name: validate_fk_products_category_id
+  description: "Validate products.category_id \u2192 categories.id"
+  type: validation
+  sql: "SELECT products.category_id\nFROM products\nLEFT JOIN categories ON products.category_id\
+    \ = categories.id\nWHERE categories.id IS NULL\n  AND products.category_id IS\
+    \ NOT NULL"
+  inputs:
+  - products
+  - categories
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_orders_customer_id
+  description: "Validate orders.customer_id \u2192 customers.id"
+  type: validation
+  sql: "SELECT orders.customer_id\nFROM orders\nLEFT JOIN customers ON orders.customer_id\
+    \ = customers.id\nWHERE customers.id IS NULL\n  AND orders.customer_id IS NOT\
+    \ NULL"
+  inputs:
+  - orders
+  - customers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_order_id
+  description: "Validate order_items.order_id \u2192 orders.id"
+  type: validation
+  sql: "SELECT order_items.order_id\nFROM order_items\nLEFT JOIN orders ON order_items.order_id\
+    \ = orders.id\nWHERE orders.id IS NULL\n  AND order_items.order_id IS NOT NULL"
+  inputs:
+  - order_items
+  - orders
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_product_id
+  description: "Validate order_items.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT order_items.product_id\nFROM order_items\nLEFT JOIN products ON order_items.product_id\
+    \ = products.id\nWHERE products.id IS NULL\n  AND order_items.product_id IS NOT\
+    \ NULL"
+  inputs:
+  - order_items
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_product_id
+  description: "Validate product_suppliers.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT product_suppliers.product_id\nFROM product_suppliers\nLEFT JOIN products\
+    \ ON product_suppliers.product_id = products.id\nWHERE products.id IS NULL\n \
+    \ AND product_suppliers.product_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_supplier_id
+  description: "Validate product_suppliers.supplier_id \u2192 suppliers.id"
+  type: validation
+  sql: "SELECT product_suppliers.supplier_id\nFROM product_suppliers\nLEFT JOIN suppliers\
+    \ ON product_suppliers.supplier_id = suppliers.id\nWHERE suppliers.id IS NULL\n\
+    \  AND product_suppliers.supplier_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - suppliers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: count_rows_products
+  description: Count rows in products
+  type: aggregation
+  sql: 'SELECT ''products'' as table_name, COUNT(*) as row_count
+
+    FROM products'
+  inputs:
+  - products
+  outputs:
+  - products_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_categories
+  description: Count rows in categories
+  type: aggregation
+  sql: 'SELECT ''categories'' as table_name, COUNT(*) as row_count
+
+    FROM categories'
+  inputs:
+  - categories
+  outputs:
+  - categories_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_orders
+  description: Count rows in orders
+  type: aggregation
+  sql: 'SELECT ''orders'' as table_name, COUNT(*) as row_count
+
+    FROM orders'
+  inputs:
+  - orders
+  outputs:
+  - orders_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_customers
+  description: Count rows in customers
+  type: aggregation
+  sql: 'SELECT ''customers'' as table_name, COUNT(*) as row_count
+
+    FROM customers'
+  inputs:
+  - customers
+  outputs:
+  - customers_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_order_items
+  description: Count rows in order_items
+  type: aggregation
+  sql: 'SELECT ''order_items'' as table_name, COUNT(*) as row_count
+
+    FROM order_items'
+  inputs:
+  - order_items
+  outputs:
+  - order_items_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_product_suppliers
+  description: Count rows in product_suppliers
+  type: aggregation
+  sql: 'SELECT ''product_suppliers'' as table_name, COUNT(*) as row_count
+
+    FROM product_suppliers'
+  inputs:
+  - product_suppliers
+  outputs:
+  - product_suppliers_count
+  tags:
+  - aggregation
+  - row_count
+- name: count_rows_suppliers
+  description: Count rows in suppliers
+  type: aggregation
+  sql: 'SELECT ''suppliers'' as table_name, COUNT(*) as row_count
+
+    FROM suppliers'
+  inputs:
+  - suppliers
+  outputs:
+  - suppliers_count
+  tags:
+  - aggregation
+  - row_count
+- name: validate_fk_products_category_id
+  description: "Validate products.category_id \u2192 categories.id"
+  type: validation
+  sql: "SELECT products.category_id\nFROM products\nLEFT JOIN categories ON products.category_id\
+    \ = categories.id\nWHERE categories.id IS NULL\n  AND products.category_id IS\
+    \ NOT NULL"
+  inputs:
+  - products
+  - categories
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_orders_customer_id
+  description: "Validate orders.customer_id \u2192 customers.id"
+  type: validation
+  sql: "SELECT orders.customer_id\nFROM orders\nLEFT JOIN customers ON orders.customer_id\
+    \ = customers.id\nWHERE customers.id IS NULL\n  AND orders.customer_id IS NOT\
+    \ NULL"
+  inputs:
+  - orders
+  - customers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_order_id
+  description: "Validate order_items.order_id \u2192 orders.id"
+  type: validation
+  sql: "SELECT order_items.order_id\nFROM order_items\nLEFT JOIN orders ON order_items.order_id\
+    \ = orders.id\nWHERE orders.id IS NULL\n  AND order_items.order_id IS NOT NULL"
+  inputs:
+  - order_items
+  - orders
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_product_id
+  description: "Validate order_items.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT order_items.product_id\nFROM order_items\nLEFT JOIN products ON order_items.product_id\
+    \ = products.id\nWHERE products.id IS NULL\n  AND order_items.product_id IS NOT\
+    \ NULL"
+  inputs:
+  - order_items
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_product_id
+  description: "Validate product_suppliers.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT product_suppliers.product_id\nFROM product_suppliers\nLEFT JOIN products\
+    \ ON product_suppliers.product_id = products.id\nWHERE products.id IS NULL\n \
+    \ AND product_suppliers.product_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_supplier_id
+  description: "Validate product_suppliers.supplier_id \u2192 suppliers.id"
+  type: validation
+  sql: "SELECT product_suppliers.supplier_id\nFROM product_suppliers\nLEFT JOIN suppliers\
+    \ ON product_suppliers.supplier_id = suppliers.id\nWHERE suppliers.id IS NULL\n\
+    \  AND product_suppliers.supplier_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - suppliers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_products_category_id
+  description: "Validate products.category_id \u2192 categories.id"
+  type: validation
+  sql: "SELECT products.category_id\nFROM products\nLEFT JOIN categories ON products.category_id\
+    \ = categories.id\nWHERE categories.id IS NULL\n  AND products.category_id IS\
+    \ NOT NULL"
+  inputs:
+  - products
+  - categories
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_orders_customer_id
+  description: "Validate orders.customer_id \u2192 customers.id"
+  type: validation
+  sql: "SELECT orders.customer_id\nFROM orders\nLEFT JOIN customers ON orders.customer_id\
+    \ = customers.id\nWHERE customers.id IS NULL\n  AND orders.customer_id IS NOT\
+    \ NULL"
+  inputs:
+  - orders
+  - customers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_order_id
+  description: "Validate order_items.order_id \u2192 orders.id"
+  type: validation
+  sql: "SELECT order_items.order_id\nFROM order_items\nLEFT JOIN orders ON order_items.order_id\
+    \ = orders.id\nWHERE orders.id IS NULL\n  AND order_items.order_id IS NOT NULL"
+  inputs:
+  - order_items
+  - orders
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_order_items_product_id
+  description: "Validate order_items.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT order_items.product_id\nFROM order_items\nLEFT JOIN products ON order_items.product_id\
+    \ = products.id\nWHERE products.id IS NULL\n  AND order_items.product_id IS NOT\
+    \ NULL"
+  inputs:
+  - order_items
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_product_id
+  description: "Validate product_suppliers.product_id \u2192 products.id"
+  type: validation
+  sql: "SELECT product_suppliers.product_id\nFROM product_suppliers\nLEFT JOIN products\
+    \ ON product_suppliers.product_id = products.id\nWHERE products.id IS NULL\n \
+    \ AND product_suppliers.product_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - products
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
+- name: validate_fk_product_suppliers_supplier_id
+  description: "Validate product_suppliers.supplier_id \u2192 suppliers.id"
+  type: validation
+  sql: "SELECT product_suppliers.supplier_id\nFROM product_suppliers\nLEFT JOIN suppliers\
+    \ ON product_suppliers.supplier_id = suppliers.id\nWHERE suppliers.id IS NULL\n\
+    \  AND product_suppliers.supplier_id IS NOT NULL"
+  inputs:
+  - product_suppliers
+  - suppliers
+  outputs: []
+  tags:
+  - fk
+  - validation
+  - referential_integrity
