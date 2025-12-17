@@ -54,6 +54,18 @@ try:
 except ImportError:
     LTN_AVAILABLE = False
 
+# Dynamic Tools imports
+from graphweaver_agent.dynamic_tools.agent_tools import (
+    check_tool_exists,
+    list_available_tools,
+    create_dynamic_tool,
+    run_dynamic_tool,
+    get_tool_source,
+    update_dynamic_tool,
+    delete_dynamic_tool,
+    DYNAMIC_TOOL_MANAGEMENT_TOOLS,
+)
+
 # =============================================================================
 # Global Connections
 # =============================================================================
@@ -2121,6 +2133,31 @@ SYSTEM_PROMPT = """You are GraphWeaver Agent - an AI assistant that helps users 
 - `export_generated_rules_sql` - Export rules as SQL script
 - `show_ltn_knowledge_base` - Show LTN axioms and predicates
 
+### Dynamic Tools
+- `check_tool_exists` - Check if a tool exists before creating
+- `list_available_tools` - List all builtin and dynamic tools
+- `create_dynamic_tool` - Create a new tool from Python code
+- `run_dynamic_tool` - Execute a dynamic tool
+- `get_tool_source` - Get source code of a dynamic tool
+- `update_dynamic_tool` - Update existing tool code
+- `delete_dynamic_tool` - Remove a dynamic tool
+
+## Dynamic Tool Workflow:
+
+When asked to create new functionality:
+1. **Check**: Use `check_tool_exists` to see if capability exists
+2. **Create**: Use `create_dynamic_tool` with Python code defining a `run()` function
+3. **Test**: Use `run_dynamic_tool` to verify it works
+4. **Persist**: Tools are saved to `dynamic_tools/` directory for future use
+
+Example tool code:
+```python
+def run(data: str, format: str = "json") -> str:
+    \"\"\"Process data in the specified format.\"\"\"
+    result = do_something(data)
+    return f"Processed: {result}"
+```
+
 ## Typical Workflow:
 
 1. **Discover FKs**: `run_fk_discovery`
@@ -2247,6 +2284,15 @@ def create_agent(verbose: bool = True):
         export_generated_rules_yaml,
         export_generated_rules_sql,
         show_ltn_knowledge_base,
+        
+        # Dynamic Tools
+        check_tool_exists,
+        list_available_tools,
+        create_dynamic_tool,
+        run_dynamic_tool,
+        get_tool_source,
+        update_dynamic_tool,
+        delete_dynamic_tool,
     ]
     
     agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
@@ -2313,6 +2359,7 @@ def run_interactive():
     print("  • 'find tables similar to orders'")
     print("  • 'sync graph to RDF and run SPARQL queries'")
     print("  • 'learn rules with LTN and generate validation rules'")
+    print("  • 'create a tool to format SQL queries'")
     print("\nType 'quit' to exit.\n")
     sys.stdout.flush()
     

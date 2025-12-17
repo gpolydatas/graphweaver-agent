@@ -1,0 +1,76 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2025-12-17T11:00:00.231233",
+  "tools": [
+    {
+      "name": "sql_formatter",
+      "description": "Format SQL queries for readability",
+      "tool_type": "dynamic",
+      "created_at": "2024-01-01T00:00:00",
+      "updated_at": "2024-01-01T00:00:00",
+      "source_file": "dynamic_tools/tool_sql_formatter.py",
+      "dependencies": [
+        "sqlparse"
+      ],
+      "parameters": {},
+      "return_type": "str",
+      "version": "1.0.0",
+      "author": "agent",
+      "tags": [
+        "sql",
+        "formatting",
+        "utility"
+      ]
+    },
+    {
+      "name": "json_analyzer",
+      "description": "Analyze JSON structure and provide statistics",
+      "tool_type": "dynamic",
+      "created_at": "2024-01-01T00:00:00",
+      "updated_at": "2024-01-01T00:00:00",
+      "source_file": "dynamic_tools/tool_json_analyzer.py",
+      "dependencies": [],
+      "parameters": {},
+      "return_type": "str",
+      "version": "1.0.0",
+      "author": "agent",
+      "tags": [
+        "json",
+        "analysis",
+        "utility"
+      ]
+    },
+    {
+      "name": "hello_world",
+      "description": "Say hello",
+      "tool_type": "dynamic",
+      "created_at": "2025-12-17T10:58:21.751936",
+      "updated_at": "2025-12-17T10:58:21.751939",
+      "source_file": "/app/dynamic_tools/tool_hello_world.py",
+      "dependencies": [],
+      "parameters": {},
+      "return_type": "str",
+      "version": "1.0.0",
+      "author": "agent",
+      "tags": []
+    },
+    {
+      "name": "text_stats",
+      "description": "Count words, characters, and lines in a text string. Returns detailed statistics including total characters, characters without spaces, word count, line count, and average word length.",
+      "tool_type": "dynamic",
+      "created_at": "2025-12-17T11:00:00.230391",
+      "updated_at": "2025-12-17T11:00:00.230398",
+      "source_file": "/app/dynamic_tools/tool_text_stats.py",
+      "dependencies": [],
+      "parameters": {},
+      "return_type": "str",
+      "version": "1.0.0",
+      "author": "agent",
+      "tags": [
+        "text",
+        "analysis",
+        "statistics"
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ name = "graphweaver-agent"
 version = "1.0.0"
 description = "Claude-powered autonomous FK discovery agent with MCP + LangChain"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 
 dependencies = [
@@ -34,6 +34,9 @@ dependencies = [
     
     # Numerical operations
     "numpy>=1.24.0",
+    
+    # SQL formatting (for dynamic tools)
+    "sqlparse>=0.5.0",
 ]
 
 [project.optional-dependencies]
@@ -44,7 +47,7 @@ dev = [
 
 ltn = [
     "ltn>=2.0.0",
-    "tensorflow>=2.10.0",
+    "tensorflow>=2.20.0",
 ]
 
 all = [

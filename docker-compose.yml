@@ -141,6 +141,7 @@ services:
       HF_HOME: /app/.cache/huggingface
     volumes:
       - embedding_cache:/app/.cache
+      - ./dynamic_tools:/app/dynamic_tools
     depends_on:
       postgres:
         condition: service_healthy
