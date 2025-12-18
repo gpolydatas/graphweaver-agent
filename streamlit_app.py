@@ -1,12 +1,13 @@
 """
 graphweaver-agent/streamlit_app.py
 
-Streamlit Chat Interface for GraphWeaver Agent
+Streamlit Chat Interface for GraphWeaver Agent with Real-Time Streaming
 """
 import os
 import sys
 import streamlit as st
-from typing import Optional
+from typing import Optional, Generator, Dict, Any, List
+import anthropic
 
 # Add paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
@@ -58,6 +59,170 @@ from graphweaver_agent.dynamic_tools.agent_tools import (
     delete_dynamic_tool,
     DYNAMIC_TOOL_MANAGEMENT_TOOLS,
 )
+
+
+# =============================================================================
+# System Prompt
+# =============================================================================
+
+SYSTEM_PROMPT = """You are GraphWeaver Agent, an intelligent AI assistant for database exploration, FK discovery, knowledge graph building, and data lineage analysis.
+
+You have access to many tools to help users:
+- Explore PostgreSQL databases (test connections, list tables, get schemas)
+- Discover foreign key relationships using a 5-stage pipeline
+- Build and analyze Neo4j knowledge graphs
+- Generate and use text/KG embeddings for semantic search
+- Execute business rules and capture lineage to Marquez
+- Work with RDF/SPARQL via Apache Jena Fuseki
+- Learn rules with Logic Tensor Networks (LTN)
+- Create and manage dynamic tools at runtime
+
+Be helpful, thorough, and explain what you're doing. When discovering FKs, validate with actual data. When building graphs, explain the structure."""
+
+
+# =============================================================================
+# Streaming Tool Definitions (JSON schema format for Anthropic API)
+# =============================================================================
+
+STREAMING_TOOLS = [
+    # Dynamic tool management
+    {"name": "check_tool_exists", "description": "Check if a dynamic tool exists in the registry",
+     "input_schema": {"type": "object", "properties": {"tool_name": {"type": "string", "description": "Name of the tool to check"}}, "required": ["tool_name"]}},
+    {"name": "list_available_tools", "description": "List all available tools - both builtin and dynamic",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "create_dynamic_tool", "description": "Create a new dynamic tool. Code must define a run() function.",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}}, "required": ["name", "description", "code"]}},
+    {"name": "run_dynamic_tool", "description": "Execute a dynamic tool by name",
+     "input_schema": {"type": "object", "properties": {"tool_name": {"type": "string"}}, "required": ["tool_name"]}},
+    {"name": "get_tool_source", "description": "Get the source code of a dynamic tool",
+     "input_schema": {"type": "object", "properties": {"tool_name": {"type": "string"}}, "required": ["tool_name"]}},
+    {"name": "update_dynamic_tool", "description": "Update a dynamic tool's code",
+     "input_schema": {"type": "object", "properties": {"tool_name": {"type": "string"}, "code": {"type": "string"}, "description": {"type": "string"}}, "required": ["tool_name", "code"]}},
+    {"name": "delete_dynamic_tool", "description": "Delete a dynamic tool",
+     "input_schema": {"type": "object", "properties": {"tool_name": {"type": "string"}}, "required": ["tool_name"]}},
+
+    # Database
+    {"name": "configure_database", "description": "Configure which PostgreSQL database to connect to",
+     "input_schema": {"type": "object", "properties": {"host": {"type": "string"}, "port": {"type": "integer"}, "database": {"type": "string"}, "username": {"type": "string"}, "password": {"type": "string"}}, "required": ["host", "port", "database", "username", "password"]}},
+    {"name": "test_database_connection", "description": "Test the PostgreSQL database connection",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "list_database_tables", "description": "List all tables in the database with column counts",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "get_table_schema", "description": "Get schema details for a table (columns, types, PKs)",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
+    {"name": "get_column_stats", "description": "Get statistics for a column (uniqueness, nulls, samples)",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "column_name": {"type": "string"}}, "required": ["table_name", "column_name"]}},
+
+    # FK Discovery
+    {"name": "run_fk_discovery", "description": "Run the full 5-stage FK discovery pipeline on the database",
+     "input_schema": {"type": "object", "properties": {"min_match_rate": {"type": "number", "default": 0.95}, "min_score": {"type": "number", "default": 0.5}}}},
+    {"name": "analyze_potential_fk", "description": "Analyze a potential FK relationship and get a score",
+     "input_schema": {"type": "object", "properties": {"source_table": {"type": "string"}, "source_column": {"type": "string"}, "target_table": {"type": "string"}, "target_column": {"type": "string"}}, "required": ["source_table", "source_column", "target_table", "target_column"]}},
+    {"name": "validate_fk_with_data", "description": "Validate a FK by checking actual data integrity",
+     "input_schema": {"type": "object", "properties": {"source_table": {"type": "string"}, "source_column": {"type": "string"}, "target_table": {"type": "string"}, "target_column": {"type": "string"}}, "required": ["source_table", "source_column", "target_table", "target_column"]}},
+
+    # Graph
+    {"name": "clear_neo4j_graph", "description": "Clear all nodes and relationships from Neo4j",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "add_fk_to_graph", "description": "Add a FK relationship to the Neo4j graph",
+     "input_schema": {"type": "object", "properties": {"source_table": {"type": "string"}, "source_column": {"type": "string"}, "target_table": {"type": "string"}, "target_column": {"type": "string"}, "score": {"type": "number", "default": 1.0}, "cardinality": {"type": "string", "default": "1:N"}}, "required": ["source_table", "source_column", "target_table", "target_column"]}},
+    {"name": "get_graph_stats", "description": "Get statistics about the Neo4j graph",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "analyze_graph_centrality", "description": "Find hub and authority tables in the graph",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "find_table_communities", "description": "Find clusters of related tables",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "predict_missing_fks", "description": "Predict missing FKs based on column naming patterns",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "run_cypher", "description": "Execute a Cypher query on Neo4j",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "connect_datasets_to_tables", "description": "Connect Dataset nodes to their matching Table nodes",
+     "input_schema": {"type": "object", "properties": {}}},
+
+    # Embeddings
+    {"name": "generate_text_embeddings", "description": "Generate text embeddings for all tables, columns, jobs, and datasets",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "generate_kg_embeddings", "description": "Generate knowledge graph embeddings using Neo4j GDS FastRP",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "create_vector_indexes", "description": "Create Neo4j vector indexes for fast similarity search",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "semantic_search_tables", "description": "Search for tables using natural language",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer", "default": 5}}, "required": ["query"]}},
+    {"name": "semantic_search_columns", "description": "Search for columns using natural language",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer", "default": 10}}, "required": ["query"]}},
+    {"name": "find_similar_tables", "description": "Find tables similar to a given table",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "top_k": {"type": "integer", "default": 5}}, "required": ["table_name"]}},
+    {"name": "find_similar_columns", "description": "Find columns similar to a given column",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "column_name": {"type": "string"}, "top_k": {"type": "integer", "default": 10}}, "required": ["table_name", "column_name"]}},
+    {"name": "predict_fks_from_embeddings", "description": "Predict potential FK relationships using KG embeddings",
+     "input_schema": {"type": "object", "properties": {"threshold": {"type": "number", "default": 0.7}, "top_k": {"type": "integer", "default": 20}}}},
+    {"name": "semantic_fk_discovery", "description": "Discover FK relationships using semantic similarity",
+     "input_schema": {"type": "object", "properties": {"source_table": {"type": "string"}, "min_score": {"type": "number", "default": 0.6}}}},
+
+    # Business Rules
+    {"name": "show_sample_business_rules", "description": "Show sample business rules YAML format",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "load_business_rules", "description": "Load business rules from YAML content",
+     "input_schema": {"type": "object", "properties": {"yaml_content": {"type": "string"}}, "required": ["yaml_content"]}},
+    {"name": "load_business_rules_from_file", "description": "Load business rules from a YAML file",
+     "input_schema": {"type": "object", "properties": {"file_path": {"type": "string", "default": "business_rules.yaml"}}}},
+    {"name": "list_business_rules", "description": "List all loaded business rules",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "execute_business_rule", "description": "Execute a single business rule",
+     "input_schema": {"type": "object", "properties": {"rule_name": {"type": "string"}, "capture_lineage": {"type": "boolean", "default": True}}, "required": ["rule_name"]}},
+    {"name": "execute_all_business_rules", "description": "Execute all loaded business rules",
+     "input_schema": {"type": "object", "properties": {"capture_lineage": {"type": "boolean", "default": True}}}},
+    {"name": "get_marquez_lineage", "description": "Get lineage graph for a dataset from Marquez",
+     "input_schema": {"type": "object", "properties": {"dataset_name": {"type": "string"}, "depth": {"type": "integer", "default": 3}}, "required": ["dataset_name"]}},
+    {"name": "list_marquez_jobs", "description": "List all jobs tracked in Marquez",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "import_lineage_to_graph", "description": "Import lineage from Marquez into Neo4j",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "analyze_data_flow", "description": "Analyze complete data flow for a table",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
+    {"name": "find_impact_analysis", "description": "Find all downstream impacts if a table changes",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
+
+    # RDF
+    {"name": "test_rdf_connection", "description": "Test connection to Apache Jena Fuseki",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "sync_graph_to_rdf", "description": "Sync Neo4j graph to RDF/Fuseki",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "run_sparql", "description": "Execute a SPARQL query on Fuseki",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "sparql_list_tables", "description": "List all tables in the RDF store",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "sparql_get_foreign_keys", "description": "Get foreign keys from RDF store",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}}},
+    {"name": "sparql_table_lineage", "description": "Get lineage for a table from RDF store",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
+    {"name": "sparql_downstream_impact", "description": "Get downstream impact analysis from RDF",
+     "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
+    {"name": "sparql_hub_tables", "description": "Find hub tables from RDF store",
+     "input_schema": {"type": "object", "properties": {"min_connections": {"type": "integer", "default": 3}}}},
+    {"name": "sparql_orphan_tables", "description": "Find orphan tables from RDF store",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "sparql_search", "description": "Search RDF store by label",
+     "input_schema": {"type": "object", "properties": {"search_term": {"type": "string"}}, "required": ["search_term"]}},
+    {"name": "get_rdf_statistics", "description": "Get RDF store statistics",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "export_rdf_turtle", "description": "Export graph as RDF Turtle format",
+     "input_schema": {"type": "object", "properties": {}}},
+
+    # LTN
+    {"name": "learn_rules_with_ltn", "description": "Use Logic Tensor Networks to learn rules from data",
+     "input_schema": {"type": "object", "properties": {"epochs": {"type": "integer", "default": 100}}}},
+    {"name": "generate_business_rules_from_ltn", "description": "Generate business rules from learned LTN rules",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "generate_all_validation_rules", "description": "Generate validation rules for all discovered FKs",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "export_generated_rules_yaml", "description": "Export generated rules as YAML",
+     "input_schema": {"type": "object", "properties": {"file_path": {"type": "string", "default": "business_rules_generated.yaml"}}}},
+    {"name": "export_generated_rules_sql", "description": "Export generated rules as SQL",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "show_ltn_knowledge_base", "description": "Show the current LTN knowledge base state",
+     "input_schema": {"type": "object", "properties": {}}},
+]
 
 
 # =============================================================================
@@ -155,13 +320,22 @@ def get_rule_generator():
     return st.session_state.rule_generator
 
 
+def get_registry():
+    """Get the dynamic tool registry."""
+    if "tool_registry" not in st.session_state:
+        from graphweaver_agent.dynamic_tools.tool_registry import ToolRegistry
+        st.session_state.tool_registry = ToolRegistry(
+            os.environ.get("DYNAMIC_TOOLS_DIR",
+                          os.path.join(os.path.dirname(__file__), "dynamic_tools"))
+        )
+    return st.session_state.tool_registry
+
+
 # =============================================================================
-# Tool Definitions
+# Tool Implementation Functions
 # =============================================================================
 
-@tool
-def configure_database(host: str, port: int, database: str, username: str, password: str) -> str:
-    """Configure which PostgreSQL database to connect to."""
+def impl_configure_database(host: str, port: int, database: str, username: str, password: str) -> str:
     st.session_state.pg_host = host
     st.session_state.pg_port = port
     st.session_state.pg_database = database
@@ -172,18 +346,14 @@ def configure_database(host: str, port: int, database: str, username: str, passw
     return f"✓ Configured database: {username}@{host}:{port}/{database}"
 
 
-@tool
-def test_database_connection() -> str:
-    """Test connection to PostgreSQL database."""
+def impl_test_database_connection() -> str:
     result = get_pg().test_connection()
     if result["success"]:
         return f"✓ Connected to database '{result['database']}' as '{result['user']}'"
     return f"✗ Failed: {result['error']}"
 
 
-@tool
-def list_database_tables() -> str:
-    """List all tables with row counts."""
+def impl_list_database_tables() -> str:
     tables = get_pg().get_tables_with_info()
     output = "Tables:\n"
     for t in tables:
@@ -191,12 +361,33 @@ def list_database_tables() -> str:
     return output
 
 
-@tool
-def run_fk_discovery(min_match_rate: float = 0.95, min_score: float = 0.5) -> str:
-    """Run complete 5-stage FK discovery pipeline on the database."""
+def impl_get_table_schema(table_name: str) -> str:
+    schema = get_pg().get_table_schema(table_name)
+    if not schema:
+        return f"Table '{table_name}' not found"
+    
+    output = f"Table: {table_name}\n"
+    output += f"Primary Key: {', '.join(schema.get('primary_keys', []))}\n"
+    output += "Columns:\n"
+    for col in schema.get('columns', []):
+        pk_marker = " [PK]" if col['name'] in schema.get('primary_keys', []) else ""
+        output += f"  - {col['name']}: {col['data_type']}{pk_marker}\n"
+    return output
+
+
+def impl_get_column_stats(table_name: str, column_name: str) -> str:
+    stats = get_pg().get_column_stats(table_name, column_name)
+    output = f"Stats for {table_name}.{column_name}:\n"
+    output += f"  Type: {stats.get('data_type', 'unknown')}\n"
+    output += f"  Distinct: {stats.get('distinct_count', 'N/A')}\n"
+    output += f"  Nulls: {stats.get('null_count', 'N/A')}\n"
+    output += f"  Samples: {stats.get('sample_values', [])}\n"
+    return output
+
+
+def impl_run_fk_discovery(min_match_rate: float = 0.95, min_score: float = 0.5) -> str:
     try:
         pg_config = get_pg_config()
-        
         result = run_discovery(
             host=pg_config.host,
             port=pg_config.port,
@@ -210,211 +401,112 @@ def run_fk_discovery(min_match_rate: float = 0.95, min_score: float = 0.5) -> st
         
         summary = result["summary"]
         output = "## FK Discovery Results\n\n"
-        output += "### Pipeline Summary\n"
         output += f"- Tables scanned: {summary['tables_scanned']}\n"
         output += f"- Total columns: {summary['total_columns']}\n"
         output += f"- Initial candidates: {summary['initial_candidates']}\n"
-        output += f"- After Stage 1 (Statistical): {summary['stage1_statistical_passed']}\n"
-        output += f"- After Stage 2 (Mathematical): {summary['stage2_mathematical_passed']}\n"
-        output += f"- After Stage 3 (Sampling): {summary['stage3_sampling_passed']}\n"
         output += f"- **Final FKs discovered: {summary['final_fks_discovered']}**\n"
         output += f"- Duration: {summary['duration_seconds']}s\n\n"
         
-        output += "### Discovered Foreign Keys\n\n"
-        if result["discovered_fks"]:
-            for fk in result["discovered_fks"]:
-                scores = fk["scores"]
-                output += f"**{fk['relationship']}**\n"
-                output += f"  - Confidence: {fk['confidence']:.1%}\n"
-                output += f"  - Cardinality: {fk['cardinality']}\n"
-                output += f"  - Scores: name={scores['name_similarity']:.2f}, "
-                output += f"type={scores['type_score']:.2f}, "
-                output += f"uniqueness={scores['uniqueness']:.2f}, "
-                output += f"geometric_mean={scores['geometric_mean']:.2f}, "
-                output += f"match_rate={scores['match_rate']:.1%}\n\n"
-        else:
-            output += "No foreign keys discovered.\n"
+        if result.get("fks"):
+            output += "### Discovered FKs:\n"
+            for fk in result["fks"]:
+                output += f"  - {fk['source_table']}.{fk['source_column']} → {fk['target_table']}.{fk['target_column']} (score: {fk['score']:.2f})\n"
         
         return output
     except Exception as e:
         import traceback
-        return f"ERROR in FK discovery: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
-@tool
-def get_table_schema(table_name: str) -> str:
-    """Get columns and primary keys for a table."""
-    meta = get_pg().get_table_metadata(table_name)
-    output = f"Table: {table_name} ({meta.row_count} rows)\n"
-    output += f"Primary Key: {', '.join(meta.primary_key_columns) or 'None'}\n"
-    output += "Columns:\n"
-    for col in meta.columns:
-        pk = " [PK]" if col.is_primary_key else ""
-        output += f"  - {col.column_name}: {col.data_type.value}{pk}\n"
-    return output
-
-
-@tool
-def get_column_stats(table_name: str, column_name: str) -> str:
-    """Get statistics for a column - uniqueness, nulls, samples."""
-    stats = get_pg().get_column_statistics(table_name, column_name)
-    return (f"{table_name}.{column_name}:\n"
-            f"  Distinct: {stats.distinct_count}/{stats.total_count} ({stats.uniqueness_ratio:.1%})\n"
-            f"  Nulls: {stats.null_count} ({stats.null_ratio:.1%})\n"
-            f"  Samples: {stats.sample_values[:5]}")
-
-
-@tool
-def analyze_potential_fk(source_table: str, source_column: str, 
-                         target_table: str, target_column: str) -> str:
-    """Analyze if a column pair could be a FK."""
+def impl_analyze_potential_fk(source_table: str, source_column: str, target_table: str, target_column: str) -> str:
+    from graphweaver_agent.discovery.pipeline import FKDetectionPipeline
+    
     pg = get_pg()
-    source_stats = pg.get_column_statistics(source_table, source_column)
-    target_stats = pg.get_column_statistics(target_table, target_column)
-    source_meta = pg.get_table_metadata(source_table)
-    target_meta = pg.get_table_metadata(target_table)
-    
-    source_col = next((c for c in source_meta.columns if c.column_name == source_column), None)
-    target_col = next((c for c in target_meta.columns if c.column_name == target_column), None)
-    
-    if not source_col or not target_col:
-        return "Error: Column not found"
-    
-    type_compatible = source_col.data_type == target_col.data_type
-    target_unique = target_stats.uniqueness_ratio > 0.95
+    pipeline = FKDetectionPipeline(pg)
+    score = pipeline.analyze_candidate(source_table, source_column, target_table, target_column)
     
     output = f"Analysis: {source_table}.{source_column} → {target_table}.{target_column}\n"
-    output += f"  Type compatible: {type_compatible}\n"
-    output += f"  Target uniqueness: {target_stats.uniqueness_ratio:.1%}\n"
-    output += f"  Source distinct: {source_stats.distinct_count}\n"
-    output += f"  Target distinct: {target_stats.distinct_count}\n"
-    
-    if type_compatible and target_unique:
-        output += f"  Recommendation: LIKELY FK - validate with data\n"
-    elif type_compatible:
-        output += f"  Recommendation: POSSIBLE - target not unique enough\n"
+    output += f"  Score: {score:.3f}\n"
+    if score >= 0.8:
+        output += "  Recommendation: LIKELY FK - Should validate with data\n"
+    elif score >= 0.5:
+        output += "  Recommendation: POSSIBLE FK - Needs investigation\n"
     else:
-        output += f"  Recommendation: UNLIKELY - type mismatch\n"
-    
+        output += "  Recommendation: UNLIKELY FK\n"
     return output
 
 
-@tool
-def validate_fk_with_data(source_table: str, source_column: str,
-                          target_table: str, target_column: str) -> str:
-    """Validate FK by checking if values actually exist."""
+def impl_validate_fk_with_data(source_table: str, source_column: str, target_table: str, target_column: str) -> str:
     pg = get_pg()
-    result = pg.check_referential_integrity(source_table, source_column, target_table, target_column)
+    result = pg.validate_fk(source_table, source_column, target_table, target_column)
     
-    if result["match_rate"] >= 0.95:
-        verdict = "✓ CONFIRMED FK"
-    elif result["match_rate"] >= 0.8:
-        verdict = "⚠ LIKELY FK (some orphans)"
+    output = f"Validation: {source_table}.{source_column} → {target_table}.{target_column}\n"
+    if result['is_valid']:
+        output += f"  ✓ CONFIRMED FK\n"
+        output += f"  Match rate: {result['match_rate']:.1%}\n"
+        output += f"  Cardinality: {result.get('cardinality', 'unknown')}\n"
     else:
-        verdict = "✗ NOT A FK"
-    
-    return (f"Validation: {source_table}.{source_column} → {target_table}.{target_column}\n"
-            f"  {verdict}\n"
-            f"  Match rate: {result['match_rate']:.1%} ({result['matches']}/{result['sample_size']})")
+        output += f"  ✗ NOT A VALID FK\n"
+        output += f"  Match rate: {result['match_rate']:.1%}\n"
+        if result.get('orphan_count'):
+            output += f"  Orphan values: {result['orphan_count']}\n"
+    return output
 
 
-@tool
-def clear_neo4j_graph() -> str:
-    """Clear all data from Neo4j graph."""
-    try:
-        GraphBuilder(get_neo4j()).clear_graph()
-        return "✓ Graph cleared"
-    except Exception as e:
-        return f"ERROR clearing graph: {type(e).__name__}: {e}"
+def impl_clear_neo4j_graph() -> str:
+    neo4j = get_neo4j()
+    neo4j.run_write("MATCH (n) DETACH DELETE n")
+    return "✓ Neo4j graph cleared"
 
 
-@tool
-def add_fk_to_graph(source_table: str, source_column: str,
-                    target_table: str, target_column: str,
-                    score: float, cardinality: str = "1:N") -> str:
-    """Add a confirmed FK relationship to the Neo4j graph."""
-    try:
-        builder = GraphBuilder(get_neo4j())
-        builder.add_table(source_table)
-        builder.add_table(target_table)
-        builder.add_fk_relationship(source_table, source_column, target_table, target_column, score, cardinality)
-        return f"✓ Added: {source_table}.{source_column} → {target_table}.{target_column}"
-    except Exception as e:
-        return f"ERROR adding FK: {type(e).__name__}: {e}"
+def impl_add_fk_to_graph(source_table: str, source_column: str, target_table: str, target_column: str, score: float = 1.0, cardinality: str = "1:N") -> str:
+    builder = GraphBuilder(get_neo4j())
+    builder.add_fk_relationship(source_table, source_column, target_table, target_column, score, cardinality)
+    return f"✓ Added: {source_table}.{source_column} → {target_table}.{target_column}"
 
 
-@tool
-def get_graph_stats() -> str:
-    """Get current graph statistics."""
-    try:
-        stats = GraphAnalyzer(get_neo4j()).get_statistics()
-        return f"Graph: {stats['tables']} tables, {stats['columns']} columns, {stats['fks']} FKs"
-    except Exception as e:
-        return f"ERROR getting stats: {type(e).__name__}: {e}"
+def impl_get_graph_stats() -> str:
+    stats = GraphAnalyzer(get_neo4j()).get_statistics()
+    return f"Graph: {stats['tables']} tables, {stats['columns']} columns, {stats['fks']} FKs"
 
 
-@tool
-def analyze_graph_centrality() -> str:
-    """Find hub tables (fact tables) and authority tables (dimensions)."""
-    try:
-        result = GraphAnalyzer(get_neo4j()).centrality_analysis()
-        output = "Centrality Analysis:\n"
-        output += f"  Hub tables (fact/transaction): {result['hub_tables']}\n"
-        output += f"  Authority tables (dimension): {result['authority_tables']}\n"
-        output += f"  Isolated tables: {result['isolated_tables']}\n"
-        return output
-    except Exception as e:
-        return f"ERROR analyzing centrality: {type(e).__name__}: {e}"
+def impl_analyze_graph_centrality() -> str:
+    result = GraphAnalyzer(get_neo4j()).centrality_analysis()
+    output = "Centrality Analysis:\n"
+    output += f"  Hub tables (fact/transaction): {result['hub_tables']}\n"
+    output += f"  Authority tables (dimension): {result['authority_tables']}\n"
+    output += f"  Isolated tables: {result['isolated_tables']}\n"
+    return output
 
 
-@tool
-def find_table_communities() -> str:
-    """Find clusters of related tables."""
-    try:
-        communities = GraphAnalyzer(get_neo4j()).community_detection()
-        if not communities:
-            return "No communities found."
-        output = "Communities:\n"
-        for i, c in enumerate(communities):
-            output += f"  {i+1}. {', '.join(c['tables'])}\n"
-        return output
-    except Exception as e:
-        return f"ERROR finding communities: {type(e).__name__}: {e}"
+def impl_find_table_communities() -> str:
+    communities = GraphAnalyzer(get_neo4j()).community_detection()
+    if not communities:
+        return "No communities found."
+    output = "Communities:\n"
+    for i, c in enumerate(communities):
+        output += f"  {i+1}. {', '.join(c['tables'])}\n"
+    return output
 
 
-@tool
-def predict_missing_fks() -> str:
-    """Predict missing FKs based on column naming patterns."""
-    try:
-        predictions = GraphAnalyzer(get_neo4j()).predict_missing_fks()
-        if not predictions:
-            return "No predictions - graph appears complete."
-        output = "Predicted missing FKs:\n"
-        for p in predictions:
-            output += f"  - {p['source_table']}.{p['source_column']} → {p['target_table']}\n"
-        return output
-    except Exception as e:
-        return f"ERROR predicting FKs: {type(e).__name__}: {e}"
+def impl_predict_missing_fks() -> str:
+    predictions = GraphAnalyzer(get_neo4j()).predict_missing_fks()
+    if not predictions:
+        return "No predictions - graph appears complete."
+    output = "Predicted missing FKs:\n"
+    for p in predictions:
+        output += f"  - {p['source_table']}.{p['source_column']} → {p['target_table']}\n"
+    return output
 
 
-@tool
-def run_cypher(query: str) -> str:
-    """Run a custom Cypher query on the Neo4j graph database."""
-    try:
-        neo4j = get_neo4j()
-    except Exception as e:
-        return f"Error: Not connected to Neo4j: {e}"
-    
+def impl_run_cypher(query: str) -> str:
+    neo4j = get_neo4j()
     try:
         results = neo4j.run_query(query)
-        if results is None:
-            results = []
-        
         if not results:
-            return "Query executed successfully. No results returned (0 rows)."
-        
+            return "Query executed successfully. No results returned."
         output = f"Results ({len(results)} rows):\n"
-        for i, row in enumerate(results[:50]):
+        for row in results[:50]:
             output += f"  {dict(row)}\n"
         if len(results) > 50:
             output += f"  ... and {len(results) - 50} more rows"
@@ -424,838 +516,815 @@ def run_cypher(query: str) -> str:
             neo4j.run_write(query)
             return "Write query executed successfully."
         except Exception as e2:
-            return f"Error executing query: {e2}"
+            return f"Error: {e2}"
 
 
-@tool
-def connect_datasets_to_tables() -> str:
-    """Connect Dataset nodes to their matching Table nodes in the graph."""
+def impl_connect_datasets_to_tables() -> str:
+    neo4j = get_neo4j()
+    result = neo4j.run_query("""
+        MATCH (d:Dataset)
+        MATCH (t:Table)
+        WHERE d.name = t.name
+        MERGE (d)-[:REPRESENTS]->(t)
+        RETURN d.name as dataset, t.name as table
+    """)
+    if not result:
+        return "No matching Dataset-Table pairs found."
+    output = f"Connected {len(result)} Datasets to Tables\n"
+    for row in result:
+        output += f"  Dataset '{row['dataset']}' → Table '{row['table']}'\n"
+    return output
+
+
+def impl_generate_text_embeddings() -> str:
     try:
-        neo4j = get_neo4j()
-        
-        result = neo4j.run_query("""
-            MATCH (d:Dataset)
-            MATCH (t:Table)
-            WHERE d.name = t.name
-            MERGE (d)-[:REPRESENTS]->(t)
-            RETURN d.name as dataset, t.name as table
-        """)
-        
-        if not result:
-            return "No matching Dataset-Table pairs found."
-        
-        output = f"## Connected {len(result)} Datasets to Tables\n\n"
-        output += "Created REPRESENTS relationships:\n"
-        for row in result:
-            output += f"  Dataset '{row['dataset']}' → Table '{row['table']}'\n"
-        output += "\nThe FK graph and lineage graph are now connected!"
-        
-        return output
-    except Exception as e:
-        return f"ERROR connecting datasets to tables: {type(e).__name__}: {e}"
-
-
-@tool
-def generate_text_embeddings() -> str:
-    """Generate text embeddings for all tables, columns, jobs, and datasets."""
-    try:
-        from graphweaver_agent.embeddings.text_embeddings import embed_all_metadata, TextEmbedder
-        
-        neo4j = get_neo4j()
-        pg = get_pg()
-        embedder = get_text_embedder()
-        
+        from graphweaver_agent.embeddings.text_embeddings import embed_all_metadata
         stats = embed_all_metadata(
-            neo4j_client=neo4j,
-            pg_connector=pg,
-            embedder=embedder,
+            neo4j_client=get_neo4j(),
+            pg_connector=get_pg(),
+            embedder=get_text_embedder(),
         )
-        
-        output = "## Text Embeddings Generated\n\n"
+        output = "## Text Embeddings Generated\n"
         output += f"- Tables embedded: {stats['tables']}\n"
         output += f"- Columns embedded: {stats['columns']}\n"
         output += f"- Jobs embedded: {stats['jobs']}\n"
         output += f"- Datasets embedded: {stats['datasets']}\n"
-        output += "\nText embeddings are now stored on Neo4j nodes."
-        
-        return output
-    except Exception as e:
-        import traceback
-        return f"ERROR generating text embeddings: {type(e).__name__}: {e}\n{traceback.format_exc()}"
-
-
-@tool
-def generate_kg_embeddings() -> str:
-    """Generate knowledge graph embeddings using Neo4j GDS FastRP algorithm."""
-    try:
-        from graphweaver_agent.embeddings.kg_embeddings import generate_fastrp_embeddings
-        
-        stats = generate_fastrp_embeddings(get_neo4j())
-        
-        output = "## KG Embeddings Generated\n\n"
-        output += f"- Nodes embedded: {stats.get('nodes_embedded', 'unknown')}\n"
-        output += f"- Embedding dimension: 128\n"
-        output += "\nKG embeddings capture graph structure/topology."
-        
-        return output
-    except Exception as e:
-        import traceback
-        return f"ERROR generating KG embeddings: {type(e).__name__}: {e}\n{traceback.format_exc()}"
-
-
-@tool
-def create_vector_indexes() -> str:
-    """Create Neo4j vector indexes for fast similarity search."""
-    try:
-        from graphweaver_agent.embeddings.vector_indexes import create_all_indexes
-        
-        stats = create_all_indexes(get_neo4j())
-        
-        output = "## Vector Indexes Created\n\n"
-        output += f"- Indexes created: {stats.get('indexes_created', 0)}\n"
-        output += "\nYou can now use semantic search tools."
-        
-        return output
-    except Exception as e:
-        import traceback
-        return f"ERROR creating indexes: {type(e).__name__}: {e}\n{traceback.format_exc()}"
-
-
-@tool
-def semantic_search_tables(query: str, limit: int = 5) -> str:
-    """Search tables using natural language."""
-    try:
-        from graphweaver_agent.embeddings.text_embeddings import search_tables
-        
-        results = search_tables(get_neo4j(), get_text_embedder(), query, limit)
-        
-        if not results:
-            return f"No tables found matching '{query}'"
-        
-        output = f"## Tables matching '{query}'\n\n"
-        for r in results:
-            output += f"- **{r['name']}** (score: {r['score']:.3f})\n"
-        
-        return output
-    except Exception as e:
-        return f"ERROR searching: {type(e).__name__}: {e}"
-
-
-@tool
-def semantic_search_columns(query: str, limit: int = 10) -> str:
-    """Search columns using natural language."""
-    try:
-        from graphweaver_agent.embeddings.text_embeddings import search_columns
-        
-        results = search_columns(get_neo4j(), get_text_embedder(), query, limit)
-        
-        if not results:
-            return f"No columns found matching '{query}'"
-        
-        output = f"## Columns matching '{query}'\n\n"
-        for r in results:
-            output += f"- **{r['table']}.{r['name']}** (score: {r['score']:.3f})\n"
-        
-        return output
-    except Exception as e:
-        return f"ERROR searching: {type(e).__name__}: {e}"
-
-
-@tool
-def find_similar_tables(table_name: str, limit: int = 5) -> str:
-    """Find structurally/semantically similar tables."""
-    try:
-        from graphweaver_agent.embeddings.text_embeddings import find_similar_tables as _find_similar
-        
-        results = _find_similar(get_neo4j(), table_name, limit)
-        
-        if not results:
-            return f"No similar tables found for '{table_name}'"
-        
-        output = f"## Tables similar to '{table_name}'\n\n"
-        for r in results:
-            output += f"- **{r['name']}** (score: {r['score']:.3f})\n"
-        
-        return output
-    except Exception as e:
-        return f"ERROR: {type(e).__name__}: {e}"
-
-
-@tool
-def find_similar_columns(table_name: str, column_name: str, limit: int = 10) -> str:
-    """Find similar columns across all tables."""
-    try:
-        from graphweaver_agent.embeddings.text_embeddings import find_similar_columns as _find_similar
-        
-        results = _find_similar(get_neo4j(), table_name, column_name, limit)
-        
-        if not results:
-            return f"No similar columns found for '{table_name}.{column_name}'"
-        
-        output = f"## Columns similar to '{table_name}.{column_name}'\n\n"
-        for r in results:
-            output += f"- **{r['table']}.{r['name']}** (score: {r['score']:.3f})\n"
-        
-        return output
-    except Exception as e:
-        return f"ERROR: {type(e).__name__}: {e}"
-
-
-@tool
-def predict_fks_from_embeddings(threshold: float = 0.8) -> str:
-    """Predict FKs using graph structure embeddings."""
-    try:
-        from graphweaver_agent.embeddings.semantic_fk import predict_fks_from_embeddings as _predict
-        
-        predictions = _predict(get_neo4j(), threshold)
-        
-        if not predictions:
-            return "No FK predictions from embeddings."
-        
-        output = "## Predicted FKs from Graph Embeddings\n\n"
-        for p in predictions:
-            output += f"- {p['source_table']}.{p['source_column']} → "
-            output += f"{p['target_table']}.{p['target_column']} "
-            output += f"(score: {p['score']:.3f})\n"
-        
-        return output
-    except Exception as e:
-        return f"ERROR: {type(e).__name__}: {e}"
-
-
-@tool
-def semantic_fk_discovery() -> str:
-    """Discover FKs using semantic similarity (for FKs with non-standard names)."""
-    try:
-        from graphweaver_agent.embeddings.semantic_fk import semantic_fk_discovery as _discover
-        
-        results = _discover(get_neo4j(), get_pg(), get_text_embedder())
-        
-        if not results:
-            return "No additional FKs found via semantic discovery."
-        
-        output = "## Semantic FK Discovery Results\n\n"
-        for r in results:
-            output += f"- {r['relationship']} (semantic score: {r['semantic_score']:.3f})\n"
-        
         return output
     except Exception as e:
         import traceback
         return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
-# Business Rules Tools
+def impl_generate_kg_embeddings() -> str:
+    try:
+        from graphweaver_agent.embeddings.kg_embeddings import generate_fastrp_embeddings
+        stats = generate_fastrp_embeddings(get_neo4j())
+        output = "## KG Embeddings Generated\n"
+        output += f"- Nodes embedded: {stats.get('nodes_embedded', 'unknown')}\n"
+        return output
+    except Exception as e:
+        import traceback
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
-@tool
-def show_sample_business_rules() -> str:
-    """Show example YAML format for business rules."""
+
+def impl_create_vector_indexes() -> str:
+    try:
+        from graphweaver_agent.embeddings.vector_indexes import create_all_indexes
+        stats = create_all_indexes(get_neo4j())
+        return f"Vector indexes created: {stats.get('indexes_created', 0)}"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_semantic_search_tables(query: str, top_k: int = 5) -> str:
+    try:
+        from graphweaver_agent.embeddings.text_embeddings import search_tables
+        results = search_tables(get_neo4j(), get_text_embedder(), query, top_k)
+        if not results:
+            return f"No tables found matching '{query}'"
+        output = f"## Tables matching '{query}'\n"
+        for r in results:
+            output += f"- **{r['name']}** (score: {r['score']:.3f})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_semantic_search_columns(query: str, top_k: int = 10) -> str:
+    try:
+        from graphweaver_agent.embeddings.text_embeddings import search_columns
+        results = search_columns(get_neo4j(), get_text_embedder(), query, top_k)
+        if not results:
+            return f"No columns found matching '{query}'"
+        output = f"## Columns matching '{query}'\n"
+        for r in results:
+            output += f"- **{r['table']}.{r['name']}** (score: {r['score']:.3f})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_find_similar_tables(table_name: str, top_k: int = 5) -> str:
+    try:
+        from graphweaver_agent.embeddings.text_embeddings import find_similar_tables
+        results = find_similar_tables(get_neo4j(), table_name, top_k)
+        if not results:
+            return f"No similar tables found for '{table_name}'"
+        output = f"## Tables similar to '{table_name}'\n"
+        for r in results:
+            output += f"- **{r['name']}** (similarity: {r['score']:.3f})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_find_similar_columns(table_name: str, column_name: str, top_k: int = 10) -> str:
+    try:
+        from graphweaver_agent.embeddings.text_embeddings import find_similar_columns
+        results = find_similar_columns(get_neo4j(), table_name, column_name, top_k)
+        if not results:
+            return f"No similar columns found for '{table_name}.{column_name}'"
+        output = f"## Columns similar to '{table_name}.{column_name}'\n"
+        for r in results:
+            output += f"- **{r['table']}.{r['name']}** (similarity: {r['score']:.3f})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_predict_fks_from_embeddings(threshold: float = 0.7, top_k: int = 20) -> str:
+    try:
+        from graphweaver_agent.embeddings.semantic_fk import predict_fks_from_embeddings
+        predictions = predict_fks_from_embeddings(get_neo4j(), threshold, top_k)
+        if not predictions:
+            return "No FK predictions found."
+        output = "## FK Predictions from Embeddings\n"
+        for p in predictions:
+            output += f"- {p['source_table']}.{p['source_column']} → {p['target_table']}.{p['target_column']} (score: {p['score']:.3f})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_semantic_fk_discovery(source_table: str = None, min_score: float = 0.6) -> str:
+    try:
+        from graphweaver_agent.embeddings.semantic_fk import SemanticFKDiscovery
+        discovery = SemanticFKDiscovery(get_neo4j(), get_text_embedder())
+        results = discovery.discover(source_table=source_table, min_score=min_score)
+        if not results:
+            return "No semantic FK relationships found."
+        output = "## Semantic FK Discovery Results\n"
+        for r in results:
+            output += f"- {r['source_table']}.{r['source_column']} → {r['target_table']}.{r['target_column']} (score: {r['score']:.3f})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_show_sample_business_rules() -> str:
     return generate_sample_rules()
 
 
-@tool
-def load_business_rules(yaml_content: str) -> str:
-    """Load business rules from YAML string."""
+def impl_load_business_rules(yaml_content: str) -> str:
+    import yaml
     try:
-        import yaml
         data = yaml.safe_load(yaml_content)
+        if "rules_config" not in st.session_state:
+            st.session_state.rules_config = BusinessRulesConfig()
         
-        rules = []
-        for rule_data in data.get('rules', []):
-            rules.append(BusinessRule(**rule_data))
+        config = st.session_state.rules_config
+        config.namespace = data.get("namespace", "default")
+        config.rules = []
         
-        st.session_state.rules_config = BusinessRulesConfig(
-            version=data.get('version', '1.0'),
-            namespace=data.get('namespace', 'default'),
-            rules=rules,
-        )
+        for r in data.get("rules", []):
+            config.rules.append(BusinessRule(
+                name=r["name"],
+                description=r.get("description", ""),
+                sql=r["sql"],
+                inputs=r.get("inputs", []),
+                outputs=r.get("outputs", []),
+                rule_type=r.get("type", "query"),
+                tags=r.get("tags", []),
+            ))
         
-        output = f"✓ Loaded {len(st.session_state.rules_config.rules)} business rules:\n"
-        for rule in st.session_state.rules_config.rules:
-            output += f"  - {rule.name}: {rule.description} [{rule.type.value}]\n"
-        return output
+        return f"✓ Loaded {len(config.rules)} business rules in namespace '{config.namespace}'"
     except Exception as e:
         return f"ERROR loading rules: {type(e).__name__}: {e}"
 
 
-@tool
-def load_business_rules_from_file(file_path: str = "business_rules.yaml") -> str:
-    """Load business rules from a YAML file on disk."""
+def impl_load_business_rules_from_file(file_path: str = "business_rules.yaml") -> str:
     try:
-        import yaml
         with open(file_path, 'r') as f:
-            data = yaml.safe_load(f)
-        
-        rules = []
-        for rule_data in data.get('rules', []):
-            rules.append(BusinessRule(**rule_data))
-        
-        st.session_state.rules_config = BusinessRulesConfig(
-            version=data.get('version', '1.0'),
-            namespace=data.get('namespace', 'default'),
-            rules=rules,
-        )
-        
-        output = f"✓ Loaded {len(st.session_state.rules_config.rules)} business rules from {file_path}:\n"
-        for rule in st.session_state.rules_config.rules:
-            output += f"  - {rule.name}: {rule.description} [{rule.type.value}]\n"
-        return output
+            content = f.read()
+        return impl_load_business_rules(content)
     except FileNotFoundError:
-        return f"ERROR: File '{file_path}' not found"
+        return f"ERROR: File not found: {file_path}"
     except Exception as e:
-        return f"ERROR loading rules: {type(e).__name__}: {e}"
+        return f"ERROR: {type(e).__name__}: {e}"
 
 
-@tool
-def list_business_rules() -> str:
-    """List all loaded business rules."""
+def impl_list_business_rules() -> str:
     if "rules_config" not in st.session_state or not st.session_state.rules_config.rules:
-        return "No business rules loaded. Use load_business_rules() first."
+        return "No business rules loaded. Use load_business_rules or load_business_rules_from_file first."
     
-    rules_config = st.session_state.rules_config
-    output = f"## Business Rules (namespace: {rules_config.namespace})\n\n"
-    for rule in rules_config.rules:
-        output += f"**{rule.name}** [{rule.type.value}]\n"
-        output += f"  {rule.description}\n"
-        output += f"  Inputs: {', '.join(rule.inputs)}\n"
-        output += f"  Outputs: {', '.join(rule.outputs) if rule.outputs else 'query result'}\n"
-        if rule.tags:
-            output += f"  Tags: {', '.join(rule.tags)}\n"
-        output += "\n"
+    config = st.session_state.rules_config
+    output = f"## Business Rules (namespace: {config.namespace})\n\n"
+    for r in config.rules:
+        output += f"- **{r.name}** ({r.rule_type}): {r.description}\n"
     return output
 
 
-@tool
-def execute_business_rule(rule_name: str, capture_lineage: bool = True) -> str:
-    """Execute a single business rule and optionally capture lineage."""
+def impl_execute_business_rule(rule_name: str, capture_lineage: bool = True) -> str:
     if "rules_config" not in st.session_state:
-        return "No business rules loaded. Use load_business_rules() first."
+        return "No business rules loaded."
     
-    rules_config = st.session_state.rules_config
-    rule = next((r for r in rules_config.rules if r.name == rule_name), None)
+    config = st.session_state.rules_config
+    rule = next((r for r in config.rules if r.name == rule_name), None)
+    
     if not rule:
-        return f"Rule '{rule_name}' not found. Available: {[r.name for r in rules_config.rules]}"
+        return f"Rule '{rule_name}' not found."
     
     try:
-        executor = BusinessRulesExecutor(
-            connector=get_pg(),
-            marquez_url=os.environ.get("MARQUEZ_URL", "http://localhost:5000"),
-            namespace=rules_config.namespace,
-        )
+        executor = BusinessRulesExecutor(get_pg(), get_marquez() if capture_lineage else None)
+        result = executor.execute_rule(rule, capture_lineage=capture_lineage)
         
-        result = executor.execute_rule(rule, emit_lineage=capture_lineage)
-        
-        output = f"## Executed: {rule_name}\n\n"
-        output += f"**Status:** {result['status']}\n"
-        output += f"**Duration:** {result['duration_seconds']:.2f}s\n"
-        output += f"**Rows returned:** {result['rows']}\n"
-        
-        if result.get('error'):
-            output += f"**Error:** {result['error']}\n"
-        
+        output = f"## Executed: {rule_name}\n"
+        output += f"- Rows returned: {result.get('row_count', 0)}\n"
         if capture_lineage:
-            output += f"**Lineage captured:** Run ID {result['run_id']}\n"
-        
-        return output
-    except Exception as e:
-        import traceback
-        return f"ERROR executing rule: {type(e).__name__}: {e}\n{traceback.format_exc()}"
-
-
-@tool
-def execute_all_business_rules(capture_lineage: bool = True) -> str:
-    """Execute all loaded business rules and capture lineage."""
-    if "rules_config" not in st.session_state or not st.session_state.rules_config.rules:
-        return "No business rules loaded. Use load_business_rules() first."
-    
-    try:
-        rules_config = st.session_state.rules_config
-        executor = BusinessRulesExecutor(
-            connector=get_pg(),
-            marquez_url=os.environ.get("MARQUEZ_URL", "http://localhost:5000"),
-            namespace=rules_config.namespace,
-        )
-        
-        results = executor.execute_all_rules(rules_config, emit_lineage=capture_lineage)
-        
-        output = f"## Executed {len(results)} Business Rules\n\n"
-        
-        success = sum(1 for r in results if r['status'] == 'success')
-        failed = len(results) - success
-        output += f"**Results:** {success} succeeded, {failed} failed\n\n"
-        
-        for result in results:
-            status_icon = "✓" if result['status'] == 'success' else "✗"
-            output += f"{status_icon} **{result['rule_name']}**: "
-            output += f"{result['rows']} rows, {result['duration_seconds']:.2f}s"
-            if result.get('error'):
-                output += f" - ERROR: {result['error']}"
-            output += "\n"
-        
-        if capture_lineage:
-            output += f"\n**Lineage captured in Marquez** (namespace: {rules_config.namespace})"
-        
+            output += f"- Lineage captured: ✓\n"
         return output
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
-@tool
-def import_lineage_to_graph() -> str:
-    """Import lineage from Marquez into the Neo4j graph."""
+def impl_execute_all_business_rules(capture_lineage: bool = True) -> str:
+    if "rules_config" not in st.session_state or not st.session_state.rules_config.rules:
+        return "No business rules loaded."
+    
+    config = st.session_state.rules_config
+    executor = BusinessRulesExecutor(get_pg(), get_marquez() if capture_lineage else None)
+    
+    output = f"## Executing {len(config.rules)} rules\n\n"
+    success = 0
+    for rule in config.rules:
+        try:
+            result = executor.execute_rule(rule, capture_lineage=capture_lineage)
+            output += f"✓ {rule.name}: {result.get('row_count', 0)} rows\n"
+            success += 1
+        except Exception as e:
+            output += f"✗ {rule.name}: {type(e).__name__}: {e}\n"
+    
+    output += f"\n**{success}/{len(config.rules)} rules executed successfully**"
+    return output
+
+
+def impl_get_marquez_lineage(dataset_name: str, depth: int = 3) -> str:
     try:
-        rules_config = st.session_state.get("rules_config")
-        namespace = rules_config.namespace if rules_config else "default"
-        
-        stats = import_lineage_to_neo4j(
-            marquez_url=os.environ.get("MARQUEZ_URL", "http://localhost:5000"),
-            neo4j_client=get_neo4j(),
-            namespace=namespace,
-        )
-        
-        output = "## Lineage Imported to Neo4j\n\n"
+        lineage = get_marquez().get_lineage(dataset_name, depth)
+        return f"Lineage for {dataset_name}:\n{lineage}"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_list_marquez_jobs() -> str:
+    try:
+        jobs = get_marquez().list_jobs()
+        if not jobs:
+            return "No jobs found in Marquez."
+        output = "## Marquez Jobs\n"
+        for j in jobs:
+            output += f"- {j['name']} ({j['namespace']})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_import_lineage_to_graph() -> str:
+    try:
+        stats = import_lineage_to_neo4j(get_marquez(), get_neo4j())
+        output = "## Lineage Imported to Neo4j\n"
         output += f"- Jobs imported: {stats.get('jobs', 0)}\n"
         output += f"- Datasets imported: {stats.get('datasets', 0)}\n"
-        output += f"- READS relationships: {stats.get('reads', 0)}\n"
-        output += f"- WRITES relationships: {stats.get('writes', 0)}\n"
-        
+        output += f"- Relationships: {stats.get('relationships', 0)}\n"
         return output
     except Exception as e:
         import traceback
-        return f"ERROR importing lineage: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
-@tool
-def analyze_data_flow(table_name: str) -> str:
-    """Analyze all data flow for a table - FKs and lineage."""
+def impl_analyze_data_flow(table_name: str) -> str:
     try:
-        neo4j = get_neo4j()
-        
-        output = f"## Data Flow Analysis: {table_name}\n\n"
-        
-        # FK relationships - outgoing
-        fk_out = neo4j.run_query("""
-            MATCH (t:Table {name: $name})<-[:BELONGS_TO]-(c:Column)-[fk:FK_TO]->(tc:Column)-[:BELONGS_TO]->(tt:Table)
-            RETURN c.name as column, tt.name as references_table, tc.name as references_column, fk.score as score
-        """, {"name": table_name})
-        
-        if fk_out:
-            output += "### Foreign Keys (FK →)\n"
-            for row in fk_out:
-                output += f"  {row['column']} → {row['references_table']}.{row['references_column']}"
-                if row.get('score'):
-                    output += f" (score: {row['score']:.2f})"
-                output += "\n"
-            output += "\n"
-        
-        # FK relationships - incoming
-        fk_in = neo4j.run_query("""
-            MATCH (st:Table)<-[:BELONGS_TO]-(sc:Column)-[fk:FK_TO]->(tc:Column)-[:BELONGS_TO]->(t:Table {name: $name})
-            RETURN st.name as source_table, sc.name as source_column, tc.name as column, fk.score as score
-        """, {"name": table_name})
-        
-        if fk_in:
-            output += "### Referenced By (FK ←)\n"
-            for row in fk_in:
-                output += f"  {row['source_table']}.{row['source_column']} → {row['column']}"
-                if row.get('score'):
-                    output += f" (score: {row['score']:.2f})"
-                output += "\n"
-            output += "\n"
-        
-        # Jobs that read this table
-        readers = neo4j.run_query("""
-            MATCH (j:Job)-[:READS]->(d:Dataset {name: $name})
-            RETURN j.name as job_name, j.description as description
-        """, {"name": table_name})
-        
-        if readers:
-            output += "### Jobs Reading This Table\n"
-            for row in readers:
-                output += f"  ⚙️ {row['job_name']}"
-                if row.get('description'):
-                    output += f" - {row['description']}"
-                output += "\n"
-            output += "\n"
-        
-        # Jobs that write this table
-        writers = neo4j.run_query("""
-            MATCH (j:Job)-[:WRITES]->(d:Dataset {name: $name})
-            RETURN j.name as job_name, j.description as description
-        """, {"name": table_name})
-        
-        if writers:
-            output += "### Jobs Writing This Table\n"
-            for row in writers:
-                output += f"  ⚙️ {row['job_name']}"
-                if row.get('description'):
-                    output += f" - {row['description']}"
-                output += "\n"
-            output += "\n"
-        
-        if not (fk_out or fk_in or readers or writers):
-            output += "No relationships found. Run FK discovery and/or execute business rules first."
-        
-        return output
-    except Exception as e:
-        return f"ERROR analyzing data flow: {type(e).__name__}: {e}"
-
-
-@tool
-def find_impact_analysis(table_name: str) -> str:
-    """Find all downstream impacts if a table changes."""
-    try:
-        neo4j = get_neo4j()
-        
-        output = f"## Impact Analysis: What breaks if '{table_name}' changes?\n\n"
-        
-        # Tables that depend on this via FK
-        dependent_tables = neo4j.run_query("""
-            MATCH (t:Table {name: $name})<-[:BELONGS_TO]-(c:Column)<-[:FK_TO]-(fc:Column)-[:BELONGS_TO]->(ft:Table)
-            RETURN DISTINCT ft.name as table_name
-        """, {"name": table_name})
-        
-        if dependent_tables:
-            output += "### Dependent Tables (via FK)\n"
-            for row in dependent_tables:
-                output += f"  📊 {row['table_name']}\n"
-            output += "\n"
-        
-        # Jobs that read this table
-        dependent_jobs = neo4j.run_query("""
-            MATCH (j:Job)-[:READS]->(d:Dataset {name: $name})
-            RETURN j.name as job_name
-        """, {"name": table_name})
-        
-        if dependent_jobs:
-            output += "### Jobs That Read This Table\n"
-            for row in dependent_jobs:
-                output += f"  ⚙️ {row['job_name']}\n"
-            output += "\n"
-        
-        # Downstream datasets (via jobs)
-        downstream = neo4j.run_query("""
-            MATCH (d1:Dataset {name: $name})<-[:READS]-(j:Job)-[:WRITES]->(d2:Dataset)
-            RETURN DISTINCT j.name as job_name, d2.name as output_dataset
-        """, {"name": table_name})
-        
-        if downstream:
-            output += "### Downstream Datasets (via Jobs)\n"
-            for row in downstream:
-                output += f"  {row['job_name']} → {row['output_dataset']}\n"
-            output += "\n"
-        
-        total = len(dependent_tables or []) + len(dependent_jobs or []) + len(downstream or [])
-        output += f"**Total potential impacts: {total}**"
-        
+        analyzer = GraphAnalyzer(get_neo4j())
+        flow = analyzer.analyze_data_flow(table_name)
+        output = f"## Data Flow for '{table_name}'\n\n"
+        output += f"### Upstream (data sources):\n"
+        for u in flow.get('upstream', []):
+            output += f"  - {u}\n"
+        output += f"\n### Downstream (data consumers):\n"
+        for d in flow.get('downstream', []):
+            output += f"  - {d}\n"
         return output
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
-# RDF Tools
-
-@tool
-def test_rdf_connection() -> str:
-    """Test connection to the RDF triple store (Apache Jena Fuseki)."""
+def impl_find_impact_analysis(table_name: str) -> str:
     try:
-        fuseki = get_fuseki()
-        result = fuseki.test_connection()
-        
-        if result["success"]:
-            count = fuseki.get_triple_count()
-            return f"✓ Connected to Fuseki RDF store\n  Dataset: {fuseki.config.dataset}\n  Triples: {count}"
-        else:
-            return f"✗ Connection failed: {result.get('error')}"
+        analyzer = GraphAnalyzer(get_neo4j())
+        impact = analyzer.impact_analysis(table_name)
+        output = f"## Impact Analysis for '{table_name}'\n\n"
+        output += f"If this table changes, the following will be affected:\n\n"
+        for item in impact.get('affected', []):
+            output += f"  - {item['type']}: {item['name']} (via {item.get('relationship', 'unknown')})\n"
+        return output
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
-@tool
-def sync_graph_to_rdf() -> str:
-    """Synchronize the entire Neo4j graph to the RDF triple store."""
+def impl_test_rdf_connection() -> str:
     try:
         fuseki = get_fuseki()
-        neo4j = get_neo4j()
-        
-        fuseki.ensure_dataset_exists()
-        
-        stats = sync_neo4j_to_rdf(neo4j, fuseki)
-        
-        if "error" in stats:
-            return f"ERROR: {stats['error']}"
-        
-        output = "## RDF Sync Complete\n\n"
-        output += f"- Tables synced: {stats.get('tables', 0)}\n"
-        output += f"- Columns synced: {stats.get('columns', 0)}\n"
-        output += f"- Foreign keys synced: {stats.get('fks', 0)}\n"
-        output += f"- Jobs synced: {stats.get('jobs', 0)}\n"
-        output += f"- Datasets synced: {stats.get('datasets', 0)}\n"
-        output += f"- **Total triples: {stats.get('total_triples', 0)}**\n"
-        
+        if fuseki.test_connection():
+            return "✓ Connected to Apache Jena Fuseki"
+        return "✗ Failed to connect to Fuseki"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_sync_graph_to_rdf() -> str:
+    try:
+        stats = sync_neo4j_to_rdf(get_neo4j(), get_fuseki())
+        output = "## Graph Synced to RDF\n"
+        output += f"- Triples created: {stats.get('triples', 0)}\n"
         return output
     except Exception as e:
         import traceback
-        return f"ERROR syncing to RDF: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
-@tool
-def run_sparql(query: str) -> str:
-    """Run a custom SPARQL query on the RDF store."""
+def impl_run_sparql(query: str) -> str:
     try:
-        sparql = get_sparql()
-        results = sparql.custom_query(query)
-        
+        results = get_fuseki().sparql_query(query)
         if not results:
-            return "Query executed. No results returned."
-        
+            return "Query executed. No results."
         output = f"Results ({len(results)} rows):\n"
         for row in results[:50]:
             output += f"  {row}\n"
-        if len(results) > 50:
-            output += f"  ... and {len(results) - 50} more rows"
-        
         return output
     except Exception as e:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
-# LTN Tools (if available)
+def impl_sparql_list_tables() -> str:
+    try:
+        results = get_sparql().list_tables()
+        if not results:
+            return "No tables found in RDF store."
+        output = "## Tables in RDF Store\n"
+        for r in results:
+            output += f"- {r.get('label', 'unknown')}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
 
-@tool
-def learn_rules_with_ltn() -> str:
-    """Learn logical rules from the graph using Logic Tensor Networks."""
+
+def impl_sparql_get_foreign_keys(table_name: str = None) -> str:
+    try:
+        results = get_sparql().get_foreign_keys(table_name)
+        if not results:
+            return "No foreign keys found."
+        output = "## Foreign Keys\n"
+        for r in results:
+            output += f"- {r.get('sourceTableLabel')}.{r.get('sourceColLabel')} → {r.get('targetTableLabel')}.{r.get('targetColLabel')}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_sparql_table_lineage(table_name: str) -> str:
+    try:
+        results = get_sparql().get_table_lineage(table_name)
+        if not results:
+            return f"No lineage found for {table_name}"
+        output = f"## Lineage for {table_name}\n"
+        for r in results:
+            output += f"- {r.get('jobLabel')} {r.get('direction')} {r.get('datasetLabel')}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_sparql_downstream_impact(table_name: str) -> str:
+    try:
+        results = get_sparql().get_downstream_impact(table_name)
+        if not results:
+            return f"No downstream impact found for {table_name}"
+        output = f"## Downstream Impact for {table_name}\n"
+        for r in results:
+            output += f"- {r.get('dependentTableLabel')} ({r.get('relationshipType')})\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_sparql_hub_tables(min_connections: int = 3) -> str:
+    try:
+        results = get_sparql().get_hub_tables(min_connections)
+        if not results:
+            return f"No hub tables found with {min_connections}+ connections."
+        output = f"## Hub Tables ({min_connections}+ connections)\n"
+        for r in results:
+            output += f"- {r.get('label')}: {r.get('totalConnections')} connections\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_sparql_orphan_tables() -> str:
+    try:
+        results = get_sparql().find_orphan_tables()
+        if not results:
+            return "No orphan tables found."
+        output = "## Orphan Tables\n"
+        for r in results:
+            output += f"- {r.get('label')}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_sparql_search(search_term: str) -> str:
+    try:
+        results = get_sparql().search_by_label(search_term)
+        if not results:
+            return f"No results for '{search_term}'"
+        output = f"## Search Results for '{search_term}'\n"
+        for r in results:
+            output += f"- {r.get('type', 'unknown')}: {r.get('label')}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_get_rdf_statistics() -> str:
+    try:
+        stats = get_sparql().get_statistics()
+        output = "## RDF Statistics\n"
+        for k, v in stats.items():
+            output += f"- {k}: {v}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_export_rdf_turtle() -> str:
+    try:
+        turtle = get_fuseki().export_turtle()
+        return f"## RDF Turtle Export\n```turtle\n{turtle[:5000]}{'...' if len(turtle) > 5000 else ''}\n```"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_learn_rules_with_ltn(epochs: int = 100) -> str:
     if not LTN_AVAILABLE:
-        return "LTN not available. Install with: pip install ltn tensorflow"
-    
+        return "LTN not available. Please install ltn package."
     try:
         learner = get_rule_learner()
-        if learner is None:
-            return "LTN not available."
-        
-        learned_rules = learner.learn_rules()
-        
-        if not learned_rules:
-            return "No rules learned. Make sure the graph has sufficient data."
-        
-        output = f"## Learned {len(learned_rules)} Rules with LTN\n\n"
-        
-        by_type = {}
-        for rule in learned_rules:
-            rtype = rule.rule_type
-            if rtype not in by_type:
-                by_type[rtype] = []
-            by_type[rtype].append(rule)
-        
-        for rtype, rules in by_type.items():
-            output += f"### {rtype.title()} Rules:\n"
-            for rule in rules:
-                output += f"- **{rule.name}**: `{rule.formula}`\n"
-                output += f"  Confidence: {rule.confidence:.2f}, Support: {rule.support}\n"
-            output += "\n"
-        
+        results = learner.learn(epochs=epochs)
+        output = "## LTN Rule Learning Results\n"
+        output += f"- Epochs: {epochs}\n"
+        output += f"- Rules learned: {len(results.get('rules', []))}\n"
+        for r in results.get('rules', []):
+            output += f"  - {r['name']}: confidence {r['confidence']:.3f}\n"
         return output
     except Exception as e:
         import traceback
-        return f"ERROR learning rules: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
-@tool
-def generate_business_rules_from_ltn() -> str:
-    """Generate executable business rules from learned LTN patterns."""
+def impl_generate_business_rules_from_ltn() -> str:
     if not LTN_AVAILABLE:
-        return "LTN not available. Install with: pip install ltn tensorflow"
-    
+        return "LTN not available."
     try:
-        learner = get_rule_learner()
         generator = get_rule_generator()
+        rules = generator.generate_from_ltn()
+        if "generated_rules" not in st.session_state:
+            st.session_state.generated_rules = []
+        st.session_state.generated_rules = rules
         
-        if learner is None or generator is None:
-            return "LTN not available."
-        
-        learned_rules = learner.get_learned_rules()
-        
-        if not learned_rules:
-            learned_rules = learner.learn_rules()
-        
-        if not learned_rules:
-            return "No learned rules available. Run learn_rules_with_ltn first."
-        
-        generated_rules = generator.generate_from_learned_rules(learned_rules)
-        
-        if not generated_rules:
-            return "No business rules generated."
-        
-        output = f"## Generated {len(generated_rules)} Business Rules\n\n"
-        
-        by_type = {}
-        for rule in generated_rules:
-            rtype = rule.rule_type
-            if rtype not in by_type:
-                by_type[rtype] = []
-            by_type[rtype].append(rule)
-        
-        for rtype, rules in by_type.items():
-            output += f"### {rtype.title()} Rules ({len(rules)}):\n"
-            for rule in rules[:5]:
-                output += f"- **{rule.name}**\n"
-                output += f"  {rule.description}\n"
-            if len(rules) > 5:
-                output += f"  ... and {len(rules) - 5} more\n"
-            output += "\n"
-        
+        output = f"## Generated {len(rules)} Business Rules from LTN\n"
+        for r in rules:
+            output += f"- {r.name}: {r.description}\n"
         return output
     except Exception as e:
-        import traceback
-        return f"ERROR generating rules: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_generate_all_validation_rules() -> str:
+    if not LTN_AVAILABLE:
+        return "LTN not available."
+    try:
+        generator = get_rule_generator()
+        rules = generator.generate_all_validation_rules(get_neo4j())
+        if "generated_rules" not in st.session_state:
+            st.session_state.generated_rules = []
+        st.session_state.generated_rules.extend(rules)
+        
+        output = f"## Generated {len(rules)} Validation Rules\n"
+        for r in rules:
+            output += f"- {r.name}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_export_generated_rules_yaml(file_path: str = "business_rules_generated.yaml") -> str:
+    if "generated_rules" not in st.session_state or not st.session_state.generated_rules:
+        return "No generated rules to export."
+    try:
+        import yaml
+        rules_data = {
+            "version": "1.0",
+            "namespace": "generated",
+            "rules": [
+                {
+                    "name": r.name,
+                    "description": r.description,
+                    "type": r.rule_type,
+                    "sql": r.sql,
+                    "inputs": r.inputs,
+                    "outputs": r.outputs,
+                    "tags": r.tags,
+                }
+                for r in st.session_state.generated_rules
+            ]
+        }
+        with open(file_path, 'w') as f:
+            yaml.dump(rules_data, f, default_flow_style=False)
+        return f"✓ Exported {len(st.session_state.generated_rules)} rules to {file_path}"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_export_generated_rules_sql() -> str:
+    if "generated_rules" not in st.session_state or not st.session_state.generated_rules:
+        return "No generated rules to export."
+    output = "## Generated Rules SQL\n\n"
+    for r in st.session_state.generated_rules:
+        output += f"-- {r.name}: {r.description}\n"
+        output += f"{r.sql}\n\n"
+    return output
+
+
+def impl_show_ltn_knowledge_base() -> str:
+    if not LTN_AVAILABLE:
+        return "LTN not available."
+    try:
+        kb = LTNKnowledgeBase(get_neo4j())
+        state = kb.get_state()
+        output = "## LTN Knowledge Base\n"
+        output += f"- Tables: {state.get('tables', 0)}\n"
+        output += f"- Columns: {state.get('columns', 0)}\n"
+        output += f"- FKs: {state.get('fks', 0)}\n"
+        output += f"- Predicates: {state.get('predicates', [])}\n"
+        return output
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_check_tool_exists(tool_name: str) -> str:
+    return "✓ EXISTS" if get_registry().tool_exists(tool_name) else "✗ NOT FOUND"
+
+
+def impl_list_available_tools() -> str:
+    dynamic = get_registry().list_tools()
+    output = "## Available Tools\n\n"
+    output += "### Builtin Tools:\n"
+    output += "- **Database**: configure_database, test_database_connection, list_database_tables, get_table_schema, get_column_stats\n"
+    output += "- **FK Discovery**: run_fk_discovery, analyze_potential_fk, validate_fk_with_data\n"
+    output += "- **Graph**: clear_neo4j_graph, add_fk_to_graph, get_graph_stats, analyze_graph_centrality, find_table_communities, predict_missing_fks, run_cypher\n"
+    output += "- **Embeddings**: generate_text_embeddings, generate_kg_embeddings, create_vector_indexes, semantic_search_tables, semantic_search_columns\n"
+    output += "- **Business Rules**: load_business_rules, execute_business_rule, execute_all_business_rules\n"
+    output += "- **RDF/SPARQL**: test_rdf_connection, sync_graph_to_rdf, run_sparql\n"
+    output += "- **LTN**: learn_rules_with_ltn, generate_business_rules_from_ltn\n"
+    output += "\n### Dynamic Tools:\n"
+    if dynamic:
+        for t in dynamic:
+            output += f"- **{t['name']}**: {t.get('description', 'No description')}\n"
+    else:
+        output += "- None created yet\n"
+    return output
+
+
+def impl_create_dynamic_tool(name: str, description: str, code: str) -> str:
+    r = get_registry()
+    if r.tool_exists(name):
+        return f"ERROR: Tool '{name}' already exists."
+    if "def run(" not in code:
+        return "ERROR: Code must define a run() function."
+    try:
+        compile(code, name, "exec")
+        path = r.create_tool(name, description, code)
+        return f"✓ Created tool '{name}'"
+    except SyntaxError as e:
+        return f"ERROR: Syntax error: {e}"
+
+
+def impl_run_dynamic_tool(tool_name: str, **kwargs) -> str:
+    r = get_registry()
+    if not r.tool_exists(tool_name):
+        return f"ERROR: Tool '{tool_name}' not found."
+    try:
+        return str(r.execute_tool(tool_name, **kwargs))
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_get_tool_source(tool_name: str) -> str:
+    r = get_registry()
+    if not r.tool_exists(tool_name):
+        return f"ERROR: Tool '{tool_name}' not found"
+    return r.get_tool_source(tool_name)
+
+
+def impl_update_dynamic_tool(tool_name: str, code: str, description: str = None) -> str:
+    r = get_registry()
+    if not r.tool_exists(tool_name):
+        return f"ERROR: Tool '{tool_name}' not found."
+    try:
+        r.update_tool(tool_name, code, description)
+        return f"✓ Updated tool '{tool_name}'"
+    except Exception as e:
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def impl_delete_dynamic_tool(tool_name: str) -> str:
+    r = get_registry()
+    if not r.tool_exists(tool_name):
+        return f"ERROR: Tool '{tool_name}' not found"
+    r.delete_tool(tool_name)
+    return f"✓ Deleted tool '{tool_name}'"
 
 
 # =============================================================================
-# System Prompt
+# Tool Function Mapping
 # =============================================================================
 
-SYSTEM_PROMPT = """You are GraphWeaver Agent, a powerful assistant for discovering database relationships, 
-building knowledge graphs, and analyzing data lineage.
-
-You have access to tools for:
-- Database exploration and FK discovery
-- Neo4j graph building and analysis
-- Semantic search with embeddings
-- Business rules execution with lineage capture
-- RDF/SPARQL querying
-- LTN rule learning
-
-Be helpful, thorough, and explain your reasoning. When asked to discover FKs or analyze data, 
-use the appropriate tools and provide clear insights.
-
-Common workflows:
-1. FK Discovery: test_database_connection → list_database_tables → run_fk_discovery
-2. Embeddings: generate_text_embeddings → create_vector_indexes → semantic_search_*
-3. Business Rules: load_business_rules_from_file → execute_all_business_rules → import_lineage_to_graph
-4. Analysis: analyze_data_flow, find_impact_analysis, analyze_graph_centrality
-"""
+STREAMING_TOOL_FUNCTIONS = {
+    # Dynamic tools
+    "check_tool_exists": lambda **kw: impl_check_tool_exists(**kw),
+    "list_available_tools": lambda **kw: impl_list_available_tools(),
+    "create_dynamic_tool": lambda **kw: impl_create_dynamic_tool(**kw),
+    "run_dynamic_tool": lambda **kw: impl_run_dynamic_tool(**kw),
+    "get_tool_source": lambda **kw: impl_get_tool_source(**kw),
+    "update_dynamic_tool": lambda **kw: impl_update_dynamic_tool(**kw),
+    "delete_dynamic_tool": lambda **kw: impl_delete_dynamic_tool(**kw),
+    # Database
+    "configure_database": lambda **kw: impl_configure_database(**kw),
+    "test_database_connection": lambda **kw: impl_test_database_connection(),
+    "list_database_tables": lambda **kw: impl_list_database_tables(),
+    "get_table_schema": lambda **kw: impl_get_table_schema(**kw),
+    "get_column_stats": lambda **kw: impl_get_column_stats(**kw),
+    # FK Discovery
+    "run_fk_discovery": lambda **kw: impl_run_fk_discovery(**kw),
+    "analyze_potential_fk": lambda **kw: impl_analyze_potential_fk(**kw),
+    "validate_fk_with_data": lambda **kw: impl_validate_fk_with_data(**kw),
+    # Graph
+    "clear_neo4j_graph": lambda **kw: impl_clear_neo4j_graph(),
+    "add_fk_to_graph": lambda **kw: impl_add_fk_to_graph(**kw),
+    "get_graph_stats": lambda **kw: impl_get_graph_stats(),
+    "analyze_graph_centrality": lambda **kw: impl_analyze_graph_centrality(),
+    "find_table_communities": lambda **kw: impl_find_table_communities(),
+    "predict_missing_fks": lambda **kw: impl_predict_missing_fks(),
+    "run_cypher": lambda **kw: impl_run_cypher(**kw),
+    "connect_datasets_to_tables": lambda **kw: impl_connect_datasets_to_tables(),
+    # Embeddings
+    "generate_text_embeddings": lambda **kw: impl_generate_text_embeddings(),
+    "generate_kg_embeddings": lambda **kw: impl_generate_kg_embeddings(),
+    "create_vector_indexes": lambda **kw: impl_create_vector_indexes(),
+    "semantic_search_tables": lambda **kw: impl_semantic_search_tables(**kw),
+    "semantic_search_columns": lambda **kw: impl_semantic_search_columns(**kw),
+    "find_similar_tables": lambda **kw: impl_find_similar_tables(**kw),
+    "find_similar_columns": lambda **kw: impl_find_similar_columns(**kw),
+    "predict_fks_from_embeddings": lambda **kw: impl_predict_fks_from_embeddings(**kw),
+    "semantic_fk_discovery": lambda **kw: impl_semantic_fk_discovery(**kw),
+    # Business Rules
+    "show_sample_business_rules": lambda **kw: impl_show_sample_business_rules(),
+    "load_business_rules": lambda **kw: impl_load_business_rules(**kw),
+    "load_business_rules_from_file": lambda **kw: impl_load_business_rules_from_file(**kw),
+    "list_business_rules": lambda **kw: impl_list_business_rules(),
+    "execute_business_rule": lambda **kw: impl_execute_business_rule(**kw),
+    "execute_all_business_rules": lambda **kw: impl_execute_all_business_rules(**kw),
+    "get_marquez_lineage": lambda **kw: impl_get_marquez_lineage(**kw),
+    "list_marquez_jobs": lambda **kw: impl_list_marquez_jobs(),
+    "import_lineage_to_graph": lambda **kw: impl_import_lineage_to_graph(),
+    "analyze_data_flow": lambda **kw: impl_analyze_data_flow(**kw),
+    "find_impact_analysis": lambda **kw: impl_find_impact_analysis(**kw),
+    # RDF
+    "test_rdf_connection": lambda **kw: impl_test_rdf_connection(),
+    "sync_graph_to_rdf": lambda **kw: impl_sync_graph_to_rdf(),
+    "run_sparql": lambda **kw: impl_run_sparql(**kw),
+    "sparql_list_tables": lambda **kw: impl_sparql_list_tables(),
+    "sparql_get_foreign_keys": lambda **kw: impl_sparql_get_foreign_keys(**kw),
+    "sparql_table_lineage": lambda **kw: impl_sparql_table_lineage(**kw),
+    "sparql_downstream_impact": lambda **kw: impl_sparql_downstream_impact(**kw),
+    "sparql_hub_tables": lambda **kw: impl_sparql_hub_tables(**kw),
+    "sparql_orphan_tables": lambda **kw: impl_sparql_orphan_tables(),
+    "sparql_search": lambda **kw: impl_sparql_search(**kw),
+    "get_rdf_statistics": lambda **kw: impl_get_rdf_statistics(),
+    "export_rdf_turtle": lambda **kw: impl_export_rdf_turtle(),
+    # LTN
+    "learn_rules_with_ltn": lambda **kw: impl_learn_rules_with_ltn(**kw),
+    "generate_business_rules_from_ltn": lambda **kw: impl_generate_business_rules_from_ltn(),
+    "generate_all_validation_rules": lambda **kw: impl_generate_all_validation_rules(),
+    "export_generated_rules_yaml": lambda **kw: impl_export_generated_rules_yaml(**kw),
+    "export_generated_rules_sql": lambda **kw: impl_export_generated_rules_sql(),
+    "show_ltn_knowledge_base": lambda **kw: impl_show_ltn_knowledge_base(),
+}
 
 
 # =============================================================================
-# Agent Creation
+# Streaming Chat Implementation
 # =============================================================================
 
-@st.cache_resource
-def create_agent():
-    """Create the LangGraph agent with Claude."""
+def stream_agent_response(client: anthropic.Anthropic, messages: List[Dict], message_placeholder) -> str:
+    """
+    Stream response from Claude with tool execution, updating the Streamlit placeholder in real-time.
     
+    Returns the final complete response text.
+    """
+    full_response = ""
+    tool_results_log = []
+    
+    # Agentic loop - keep going until no more tool calls
+    while True:
+        tool_inputs = {}
+        current_block_id = None
+        current_response_content = []
+        
+        # Stream the response
+        with client.messages.stream(
+            model="claude-sonnet-4-20250514",
+            max_tokens=8192,
+            system=SYSTEM_PROMPT,
+            messages=messages,
+            tools=STREAMING_TOOLS,
+        ) as stream:
+            for event in stream:
+                if event.type == "content_block_start":
+                    if event.content_block.type == "tool_use":
+                        current_block_id = event.content_block.id
+                        tool_inputs[current_block_id] = {
+                            "name": event.content_block.name,
+                            "input": ""
+                        }
+                        # Show tool being called
+                        full_response += f"\n\n🔧 **Calling: {event.content_block.name}**\n"
+                        message_placeholder.markdown(full_response + "▌")
+                        
+                elif event.type == "content_block_delta":
+                    if event.delta.type == "text_delta":
+                        full_response += event.delta.text
+                        message_placeholder.markdown(full_response + "▌")
+                    elif event.delta.type == "input_json_delta":
+                        if current_block_id:
+                            tool_inputs[current_block_id]["input"] += event.delta.partial_json
+                            
+                elif event.type == "content_block_stop":
+                    current_block_id = None
+            
+            # Get the final message
+            response = stream.get_final_message()
+            current_response_content = response.content
+        
+        # Add assistant message to history
+        messages.append({"role": "assistant", "content": current_response_content})
+        
+        # Check if we need to execute tools
+        if response.stop_reason != "tool_use":
+            break
+        
+        # Execute tool calls
+        tool_results = []
+        for block in current_response_content:
+            if block.type == "tool_use":
+                full_response += f"\n⏳ Executing...\n"
+                message_placeholder.markdown(full_response + "▌")
+                
+                fn = STREAMING_TOOL_FUNCTIONS.get(block.name)
+                if fn:
+                    try:
+                        result = fn(**block.input)
+                    except Exception as e:
+                        result = f"Error: {type(e).__name__}: {e}"
+                else:
+                    result = f"Unknown tool: {block.name}"
+                
+                # Show tool result
+                full_response += f"\n```\n{result}\n```\n"
+                message_placeholder.markdown(full_response + "▌")
+                tool_results_log.append({"tool": block.name, "result": result})
+                
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result
+                })
+        
+        # Add tool results to messages for next iteration
+        messages.append({"role": "user", "content": tool_results})
+    
+    # Remove cursor and return final response
+    message_placeholder.markdown(full_response)
+    return full_response
+
+
+def get_anthropic_client():
+    """Get or create Anthropic client."""
     api_key = st.session_state.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")
-    
     if not api_key:
         return None
-    
-    llm = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        temperature=0.1,
-        max_tokens=4096,
-        api_key=api_key,
-    )
-    
-    tools = [
-        # Database
-        configure_database,
-        test_database_connection,
-        list_database_tables,
-        get_table_schema,
-        get_column_stats,
-        
-        # FK Discovery
-        run_fk_discovery,
-        analyze_potential_fk,
-        validate_fk_with_data,
-        
-        # Neo4j Graph
-        clear_neo4j_graph,
-        add_fk_to_graph,
-        get_graph_stats,
-        analyze_graph_centrality,
-        find_table_communities,
-        predict_missing_fks,
-        run_cypher,
-        connect_datasets_to_tables,
-        
-        # Embeddings & Semantic Search
-        generate_text_embeddings,
-        generate_kg_embeddings,
-        create_vector_indexes,
-        semantic_search_tables,
-        semantic_search_columns,
-        find_similar_tables,
-        find_similar_columns,
-        predict_fks_from_embeddings,
-        semantic_fk_discovery,
-        
-        # Business Rules & Lineage
-        show_sample_business_rules,
-        load_business_rules,
-        load_business_rules_from_file,
-        list_business_rules,
-        execute_business_rule,
-        execute_all_business_rules,
-        import_lineage_to_graph,
-        analyze_data_flow,
-        find_impact_analysis,
-        
-        # RDF Tools
-        test_rdf_connection,
-        sync_graph_to_rdf,
-        run_sparql,
-        
-        # LTN Tools
-        learn_rules_with_ltn,
-        generate_business_rules_from_ltn,
-        
-        # Dynamic Tools
-        check_tool_exists,
-        list_available_tools,
-        create_dynamic_tool,
-        run_dynamic_tool,
-        get_tool_source,
-        update_dynamic_tool,
-        delete_dynamic_tool,
-    ]
-    
-    agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-    
-    return agent
-
-
-def extract_response(result) -> str:
-    """Extract text response from LangGraph result."""
-    if not isinstance(result, dict):
-        return str(result)
-    
-    messages = result.get("messages", [])
-    
-    if not messages:
-        return str(result)
-    
-    last_msg = messages[-1]
-    content = getattr(last_msg, 'content', None)
-    
-    if content is None:
-        return str(last_msg)
-    
-    if isinstance(content, str):
-        return content
-    
-    if isinstance(content, list):
-        text_parts = []
-        for block in content:
-            if isinstance(block, str):
-                text_parts.append(block)
-            elif isinstance(block, dict):
-                if block.get('type') == 'text':
-                    text_parts.append(block.get('text', ''))
-            elif hasattr(block, 'text'):
-                text_parts.append(block.text)
-        return '\n'.join(text_parts) if text_parts else str(content)
-    
-    return str(content)
+    return anthropic.Anthropic(api_key=api_key)
 
 
 # =============================================================================
@@ -1285,6 +1354,13 @@ def main():
         )
         if api_key:
             st.session_state.anthropic_api_key = api_key
+        
+        # Streaming toggle
+        st.session_state.use_streaming = st.toggle(
+            "🔴 Enable Streaming",
+            value=st.session_state.get("use_streaming", True),
+            help="Stream responses in real-time"
+        )
         
         st.divider()
         
@@ -1340,15 +1416,15 @@ def main():
         # Clear chat button
         if st.button("🗑️ Clear Chat", use_container_width=True):
             st.session_state.messages = []
-            st.session_state.chat_history = []
+            st.session_state.streaming_messages = []
             st.rerun()
     
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    if "streaming_messages" not in st.session_state:
+        st.session_state.streaming_messages = []
     
     # Check for API key
     if not st.session_state.get("anthropic_api_key") and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -1375,43 +1451,97 @@ def main():
         
         # Get agent response
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    agent = create_agent()
-                    
-                    if agent is None:
-                        st.error("Failed to create agent. Please check your API key.")
+            try:
+                if st.session_state.get("use_streaming", True):
+                    # STREAMING MODE
+                    client = get_anthropic_client()
+                    if client is None:
+                        st.error("Failed to create Anthropic client. Please check your API key.")
                         st.stop()
                     
-                    # Build messages for agent
-                    messages = st.session_state.chat_history + [HumanMessage(content=prompt)]
+                    # Build messages for API
+                    st.session_state.streaming_messages.append({"role": "user", "content": prompt})
                     
-                    # Invoke agent
-                    result = agent.invoke(
-                        {"messages": messages},
-                        config={"recursion_limit": 100}
+                    # Create placeholder for streaming
+                    message_placeholder = st.empty()
+                    
+                    # Stream response
+                    response = stream_agent_response(
+                        client, 
+                        st.session_state.streaming_messages.copy(),
+                        message_placeholder
                     )
                     
-                    # Extract response
-                    response = extract_response(result)
-                    
-                    # Display response
-                    st.markdown(response)
-                    
-                    # Update history
+                    # Update chat history
                     st.session_state.messages.append({"role": "assistant", "content": response})
-                    st.session_state.chat_history.append(HumanMessage(content=prompt))
-                    st.session_state.chat_history.append(AIMessage(content=response))
+                    st.session_state.streaming_messages.append({"role": "assistant", "content": response})
                     
                     # Keep history manageable
-                    if len(st.session_state.chat_history) > 20:
-                        st.session_state.chat_history = st.session_state.chat_history[-20:]
-                    
-                except Exception as e:
-                    import traceback
-                    error_msg = f"Error: {type(e).__name__}: {e}\n\n```\n{traceback.format_exc()}\n```"
-                    st.error(error_msg)
-                    st.session_state.messages.append({"role": "assistant", "content": f"Error: {e}"})
+                    if len(st.session_state.streaming_messages) > 20:
+                        st.session_state.streaming_messages = st.session_state.streaming_messages[-20:]
+                else:
+                    # NON-STREAMING MODE (fallback to LangChain)
+                    with st.spinner("Thinking..."):
+                        from langgraph.prebuilt import create_react_agent
+                        
+                        llm = ChatAnthropic(
+                            model="claude-sonnet-4-20250514",
+                            api_key=st.session_state.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY"),
+                            max_tokens=8192,
+                        )
+                        
+                        # Create tools list (simplified for non-streaming)
+                        tools = [
+                            test_database_connection_tool,
+                            list_database_tables_tool,
+                            run_fk_discovery_tool,
+                            get_graph_stats_tool,
+                        ]
+                        
+                        agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+                        result = agent.invoke(
+                            {"messages": [HumanMessage(content=prompt)]},
+                            config={"recursion_limit": 100}
+                        )
+                        
+                        # Extract response
+                        messages = result.get("messages", [])
+                        if messages:
+                            last_msg = messages[-1]
+                            response = getattr(last_msg, 'content', str(last_msg))
+                        else:
+                            response = str(result)
+                        
+                        st.markdown(response)
+                        st.session_state.messages.append({"role": "assistant", "content": response})
+                        
+            except Exception as e:
+                import traceback
+                error_msg = f"Error: {type(e).__name__}: {e}\n\n```\n{traceback.format_exc()}\n```"
+                st.error(error_msg)
+                st.session_state.messages.append({"role": "assistant", "content": f"Error: {e}"})
+
+
+# Tool wrappers for non-streaming mode
+@tool
+def test_database_connection_tool() -> str:
+    """Test connection to PostgreSQL database."""
+    return impl_test_database_connection()
+
+@tool
+def list_database_tables_tool() -> str:
+    """List all tables with row counts."""
+    return impl_list_database_tables()
+
+@tool
+def run_fk_discovery_tool(min_match_rate: float = 0.95, min_score: float = 0.5) -> str:
+    """Run complete 5-stage FK discovery pipeline."""
+    return impl_run_fk_discovery(min_match_rate, min_score)
+
+@tool
+def get_graph_stats_tool() -> str:
+    """Get current graph statistics."""
+    return impl_get_graph_stats()
 
 
 if __name__ == "__main__":
