@@ -29,6 +29,7 @@ class PostgreSQLConnector:
     
     def __init__(self, config: DataSourceConfig):
         self.config = config
+        self.db_type = config.db_type  # Expose for compatibility
     
     @contextmanager
     def connection(self):

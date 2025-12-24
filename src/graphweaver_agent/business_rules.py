@@ -94,8 +94,12 @@ class OpenLineageRunEvent:
 class MarquezClient:
     """Client for Marquez lineage server."""
     
-    def __init__(self, url: str = "http://localhost:5000"):
-        self.url = url.rstrip("/")
+    def __init__(self, url: str = None, base_url: str = None, **kwargs):
+        # Accept 'url', 'base_url', or any other parameter for maximum compatibility
+        # Priority: url > base_url > kwargs.get('host') > default
+        effective_url = url or base_url or kwargs.get('host') or "http://localhost:5000"
+        self.url = effective_url.rstrip("/")
+        self.base_url = self.url  # Alias for compatibility
         self.api_url = f"{self.url}/api/v1"
         print(f"[MarquezClient] Initialized with URL: {self.url}")
     
@@ -207,6 +211,14 @@ class MarquezClient:
         except Exception as e:
             print(f"[MarquezClient] get_job_runs ERROR: {e}")
             return []
+    
+    def list_jobs(self, namespace: str = "default") -> List[Dict]:
+        """Alias for get_jobs for compatibility."""
+        return self.get_jobs(namespace)
+    
+    def get_lineage(self, dataset_name: str, depth: int = 5) -> Dict:
+        """Alias for get_dataset_lineage for compatibility."""
+        return self.get_dataset_lineage("default", dataset_name, depth)
     
     def test_connection(self) -> bool:
         """Test if Marquez is reachable."""
