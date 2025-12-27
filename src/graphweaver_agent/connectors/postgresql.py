@@ -29,7 +29,7 @@ class PostgreSQLConnector:
     
     def __init__(self, config: DataSourceConfig):
         self.config = config
-        self.db_type = config.db_type  # Expose for compatibility
+        self.db_type = config.db_type
     
     @contextmanager
     def connection(self):
@@ -80,10 +80,40 @@ class PostgreSQLConnector:
                 """, (self.config.schema_name,))
                 return [dict(row) for row in cur.fetchall()]
     
+    def get_table_schema(self, table_name: str) -> Dict[str, Any]:
+        """Get schema information for a table."""
+        with self.connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    ORDER BY ordinal_position
+                """, (self.config.schema_name, table_name))
+                columns = [dict(row) for row in cur.fetchall()]
+                
+                cur.execute("""
+                    SELECT a.attname FROM pg_index i
+                    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                    JOIN pg_class c ON c.oid = i.indrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = %s AND c.relname = %s AND i.indisprimary
+                """, (self.config.schema_name, table_name))
+                primary_keys = [r["attname"] for r in cur.fetchall()]
+                
+                cur.execute(f'SELECT COUNT(*) as cnt FROM "{self.config.schema_name}"."{table_name}"')
+                row_count = cur.fetchone()["cnt"]
+                
+                return {
+                    "table_name": table_name,
+                    "columns": columns,
+                    "primary_keys": primary_keys,
+                    "row_count": row_count,
+                }
+    
     def get_table_metadata(self, table_name: str) -> TableMetadata:
         with self.connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Columns
                 cur.execute("""
                     SELECT column_name, data_type, is_nullable FROM information_schema.columns
                     WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position
@@ -94,7 +124,6 @@ class PostgreSQLConnector:
                     is_nullable=r["is_nullable"] == "YES"
                 ) for r in cur.fetchall()]
                 
-                # Primary keys
                 cur.execute("""
                     SELECT a.attname FROM pg_index i
                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
@@ -104,12 +133,10 @@ class PostgreSQLConnector:
                 """, (self.config.schema_name, table_name))
                 pk_cols = [r["attname"] for r in cur.fetchall()]
                 
-                # Row count
                 cur.execute(f'SELECT COUNT(*) as cnt FROM "{self.config.schema_name}"."{table_name}"')
                 row = cur.fetchone()
                 row_count = row["cnt"] if row else 0
                 
-                # Mark PK columns
                 for col in columns:
                     if col.column_name in pk_cols:
                         col.is_primary_key = True
@@ -147,6 +174,54 @@ class PostgreSQLConnector:
                     null_ratio=nulls/total if total > 0 else 0,
                     sample_values=samples,
                 )
+    
+    def validate_fk(self, source_table: str, source_column: str,
+                    target_table: str, target_column: str) -> Dict[str, Any]:
+        """Validate if a FK relationship is valid by checking data."""
+        with self.connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f'''
+                    SELECT COUNT(*) as total
+                    FROM "{self.config.schema_name}"."{source_table}"
+                    WHERE "{source_column}" IS NOT NULL
+                ''')
+                total = cur.fetchone()["total"]
+                
+                if total == 0:
+                    return {
+                        "is_valid": False, "match_rate": 0, "matched_count": 0,
+                        "total_count": 0, "orphan_count": 0, "cardinality": "unknown",
+                        "reason": "No data in source column"
+                    }
+                
+                cur.execute(f'''
+                    SELECT COUNT(*) as matched
+                    FROM "{self.config.schema_name}"."{source_table}" s
+                    WHERE s."{source_column}" IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1 FROM "{self.config.schema_name}"."{target_table}" t
+                          WHERE t."{target_column}" = s."{source_column}"
+                      )
+                ''')
+                matched = cur.fetchone()["matched"]
+                match_rate = matched / total if total > 0 else 0
+                
+                cur.execute(f'''
+                    SELECT COUNT(*) as src_count, COUNT(DISTINCT "{source_column}") as distinct_count
+                    FROM "{self.config.schema_name}"."{source_table}"
+                    WHERE "{source_column}" IS NOT NULL
+                ''')
+                card_row = cur.fetchone()
+                cardinality = "1:1" if card_row["src_count"] == card_row["distinct_count"] else "1:N"
+                
+                return {
+                    "is_valid": match_rate >= 0.95,
+                    "match_rate": match_rate,
+                    "matched_count": matched,
+                    "total_count": total,
+                    "orphan_count": total - matched,
+                    "cardinality": cardinality,
+                }
     
     def check_referential_integrity(self, source_table: str, source_column: str,
                                      target_table: str, target_column: str,

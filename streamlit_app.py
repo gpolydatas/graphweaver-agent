@@ -154,9 +154,9 @@ STREAMING_TOOLS = [
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "top_k": {"type": "integer", "default": 5}}, "required": ["table_name"]}},
     {"name": "find_similar_columns", "description": "Find columns similar to a given column",
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}, "column_name": {"type": "string"}, "top_k": {"type": "integer", "default": 10}}, "required": ["table_name", "column_name"]}},
-    {"name": "predict_fks_from_embeddings", "description": "Predict potential FK relationships using KG embeddings",
+    {"name": "predict_fks_from_embeddings", "description": "Predict FK relationships using embedding similarity",
      "input_schema": {"type": "object", "properties": {"threshold": {"type": "number", "default": 0.7}, "top_k": {"type": "integer", "default": 20}}}},
-    {"name": "semantic_fk_discovery", "description": "Discover FK relationships using semantic similarity",
+    {"name": "semantic_fk_discovery", "description": "Discover FKs using semantic similarity",
      "input_schema": {"type": "object", "properties": {"source_table": {"type": "string"}, "min_score": {"type": "number", "default": 0.6}}}},
 
     # Business Rules
@@ -168,75 +168,78 @@ STREAMING_TOOLS = [
      "input_schema": {"type": "object", "properties": {"file_path": {"type": "string", "default": "business_rules.yaml"}}}},
     {"name": "list_business_rules", "description": "List all loaded business rules",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "execute_business_rule", "description": "Execute a single business rule",
+    {"name": "execute_business_rule", "description": "Execute a specific business rule",
      "input_schema": {"type": "object", "properties": {"rule_name": {"type": "string"}, "capture_lineage": {"type": "boolean", "default": True}}, "required": ["rule_name"]}},
     {"name": "execute_all_business_rules", "description": "Execute all loaded business rules",
      "input_schema": {"type": "object", "properties": {"capture_lineage": {"type": "boolean", "default": True}}}},
-    {"name": "get_marquez_lineage", "description": "Get lineage graph for a dataset from Marquez",
+    {"name": "get_marquez_lineage", "description": "Get data lineage for a dataset from Marquez",
      "input_schema": {"type": "object", "properties": {"dataset_name": {"type": "string"}, "depth": {"type": "integer", "default": 3}}, "required": ["dataset_name"]}},
-    {"name": "list_marquez_jobs", "description": "List all jobs tracked in Marquez",
+    {"name": "list_marquez_jobs", "description": "List all jobs tracked by Marquez",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "import_lineage_to_graph", "description": "Import lineage from Marquez into Neo4j",
+    {"name": "import_lineage_to_graph", "description": "Import Marquez lineage data into Neo4j",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "analyze_data_flow", "description": "Analyze complete data flow for a table",
+    {"name": "analyze_data_flow", "description": "Analyze data flow for a table",
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
-    {"name": "find_impact_analysis", "description": "Find all downstream impacts if a table changes",
+    {"name": "find_impact_analysis", "description": "Find what tables would be impacted by changes",
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
 
-    # RDF
+    # RDF/SPARQL
     {"name": "test_rdf_connection", "description": "Test connection to Apache Jena Fuseki",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "sync_graph_to_rdf", "description": "Sync Neo4j graph to RDF/Fuseki",
+    {"name": "sync_graph_to_rdf", "description": "Sync Neo4j graph to RDF triple store",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "run_sparql", "description": "Execute a SPARQL query on Fuseki",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
-    {"name": "sparql_list_tables", "description": "List all tables in the RDF store",
+    {"name": "sparql_list_tables", "description": "List all tables via SPARQL",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "sparql_get_foreign_keys", "description": "Get foreign keys from RDF store",
+    {"name": "sparql_get_foreign_keys", "description": "Get foreign keys via SPARQL",
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}}},
-    {"name": "sparql_table_lineage", "description": "Get lineage for a table from RDF store",
+    {"name": "sparql_table_lineage", "description": "Get table lineage via SPARQL",
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
-    {"name": "sparql_downstream_impact", "description": "Get downstream impact analysis from RDF",
+    {"name": "sparql_downstream_impact", "description": "Get downstream impact via SPARQL",
      "input_schema": {"type": "object", "properties": {"table_name": {"type": "string"}}, "required": ["table_name"]}},
-    {"name": "sparql_hub_tables", "description": "Find hub tables from RDF store",
+    {"name": "sparql_hub_tables", "description": "Find hub tables via SPARQL",
      "input_schema": {"type": "object", "properties": {"min_connections": {"type": "integer", "default": 3}}}},
-    {"name": "sparql_orphan_tables", "description": "Find orphan tables from RDF store",
+    {"name": "sparql_orphan_tables", "description": "Find orphan tables via SPARQL",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "sparql_search", "description": "Search RDF store by label",
+    {"name": "sparql_search", "description": "Search entities by label via SPARQL",
      "input_schema": {"type": "object", "properties": {"search_term": {"type": "string"}}, "required": ["search_term"]}},
     {"name": "get_rdf_statistics", "description": "Get RDF store statistics",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "export_rdf_turtle", "description": "Export graph as RDF Turtle format",
+    {"name": "export_rdf_turtle", "description": "Export RDF data as Turtle",
      "input_schema": {"type": "object", "properties": {}}},
 
     # LTN
-    {"name": "learn_rules_with_ltn", "description": "Use Logic Tensor Networks to learn rules from data",
+    {"name": "learn_rules_with_ltn", "description": "Learn rules using Logic Tensor Networks",
      "input_schema": {"type": "object", "properties": {"epochs": {"type": "integer", "default": 100}}}},
-    {"name": "generate_business_rules_from_ltn", "description": "Generate business rules from learned LTN rules",
+    {"name": "generate_business_rules_from_ltn", "description": "Generate business rules from LTN learned patterns",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "generate_all_validation_rules", "description": "Generate validation rules for all discovered FKs",
+    {"name": "generate_all_validation_rules", "description": "Generate validation rules from graph structure",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "export_generated_rules_yaml", "description": "Export generated rules as YAML",
+    {"name": "export_generated_rules_yaml", "description": "Export generated rules to YAML",
      "input_schema": {"type": "object", "properties": {"file_path": {"type": "string", "default": "business_rules_generated.yaml"}}}},
     {"name": "export_generated_rules_sql", "description": "Export generated rules as SQL",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "show_ltn_knowledge_base", "description": "Show the current LTN knowledge base state",
+    {"name": "show_ltn_knowledge_base", "description": "Show the LTN knowledge base",
      "input_schema": {"type": "object", "properties": {}}},
 ]
 
 
 # =============================================================================
-# Global Connection Getters (Cached via Session State)
+# Global State Accessors
 # =============================================================================
 
 def get_pg_config() -> DataSourceConfig:
-    """Get PostgreSQL config from session state or environment."""
+    """Get PostgreSQL config from session state."""
+    from graphweaver_agent.models import DatabaseType
     return DataSourceConfig(
         host=st.session_state.get("pg_host", os.environ.get("POSTGRES_HOST", "localhost")),
         port=int(st.session_state.get("pg_port", os.environ.get("POSTGRES_PORT", "5432"))),
         database=st.session_state.get("pg_database", os.environ.get("POSTGRES_DB", "orders")),
         username=st.session_state.get("pg_username", os.environ.get("POSTGRES_USER", "saphenia")),
         password=st.session_state.get("pg_password", os.environ.get("POSTGRES_PASSWORD", "secret")),
+        db_type=DatabaseType.POSTGRESQL,
+        schema_name=st.session_state.get("pg_schema", "public"),
     )
 
 
@@ -247,31 +250,29 @@ def get_pg() -> PostgreSQLConnector:
     return st.session_state.pg_connector
 
 
+def get_neo4j_config() -> Neo4jConfig:
+    """Get Neo4j config from session state."""
+    return Neo4jConfig(
+        uri=st.session_state.get("neo4j_uri", os.environ.get("NEO4J_URI", "bolt://localhost:7687")),
+        username=st.session_state.get("neo4j_user", os.environ.get("NEO4J_USER", "neo4j")),
+        password=st.session_state.get("neo4j_password", os.environ.get("NEO4J_PASSWORD", "password")),
+        database=st.session_state.get("neo4j_database", "neo4j"),
+    )
+
+
 def get_neo4j() -> Neo4jClient:
     """Get or create Neo4j client."""
     if "neo4j_client" not in st.session_state:
-        st.session_state.neo4j_client = Neo4jClient(Neo4jConfig(
-            uri=st.session_state.get("neo4j_uri", os.environ.get("NEO4J_URI", "bolt://localhost:7687")),
-            username=st.session_state.get("neo4j_user", os.environ.get("NEO4J_USER", "neo4j")),
-            password=st.session_state.get("neo4j_password", os.environ.get("NEO4J_PASSWORD", "password")),
-        ))
+        st.session_state.neo4j_client = Neo4jClient(get_neo4j_config())
     return st.session_state.neo4j_client
 
 
 def get_text_embedder():
     """Get or create text embedder."""
     if "text_embedder" not in st.session_state:
-        from graphweaver_agent.embeddings.text_embeddings import TextEmbedder
+        from graphweaver_agent.embeddings import TextEmbedder
         st.session_state.text_embedder = TextEmbedder()
     return st.session_state.text_embedder
-
-
-def get_kg_embedder():
-    """Get or create KG embedder."""
-    if "kg_embedder" not in st.session_state:
-        from graphweaver_agent.embeddings.kg_embeddings import KGEmbedder
-        st.session_state.kg_embedder = KGEmbedder(get_neo4j())
-    return st.session_state.kg_embedder
 
 
 def get_fuseki() -> FusekiClient:
@@ -366,26 +367,27 @@ def impl_get_table_schema(table_name: str) -> str:
     if not schema:
         return f"Table '{table_name}' not found"
     
-    output = f"Table: {table_name}\n"
+    output = f"Table: {table_name} ({schema.get('row_count', 0)} rows)\n"
     output += f"Primary Key: {', '.join(schema.get('primary_keys', []))}\n"
     output += "Columns:\n"
     for col in schema.get('columns', []):
-        pk_marker = " [PK]" if col['name'] in schema.get('primary_keys', []) else ""
-        output += f"  - {col['name']}: {col['data_type']}{pk_marker}\n"
+        pk_marker = " [PK]" if col['column_name'] in schema.get('primary_keys', []) else ""
+        output += f"  - {col['column_name']}: {col['data_type']}{pk_marker}\n"
     return output
 
 
 def impl_get_column_stats(table_name: str, column_name: str) -> str:
-    stats = get_pg().get_column_stats(table_name, column_name)
+    stats = get_pg().get_column_statistics(table_name, column_name)
     output = f"Stats for {table_name}.{column_name}:\n"
-    output += f"  Type: {stats.get('data_type', 'unknown')}\n"
-    output += f"  Distinct: {stats.get('distinct_count', 'N/A')}\n"
-    output += f"  Nulls: {stats.get('null_count', 'N/A')}\n"
-    output += f"  Samples: {stats.get('sample_values', [])}\n"
+    output += f"  Distinct: {stats.distinct_count}\n"
+    output += f"  Nulls: {stats.null_count}\n"
+    output += f"  Uniqueness: {stats.uniqueness_ratio:.1%}\n"
+    output += f"  Samples: {stats.sample_values}\n"
     return output
 
 
 def impl_run_fk_discovery(min_match_rate: float = 0.95, min_score: float = 0.5) -> str:
+    """Run FK discovery pipeline AND persist results to Neo4j."""
     try:
         pg_config = get_pg_config()
         result = run_discovery(
@@ -407,38 +409,113 @@ def impl_run_fk_discovery(min_match_rate: float = 0.95, min_score: float = 0.5) 
         output += f"- **Final FKs discovered: {summary['final_fks_discovered']}**\n"
         output += f"- Duration: {summary['duration_seconds']}s\n\n"
         
-        if result.get("fks"):
-            output += "### Discovered FKs:\n"
-            for fk in result["fks"]:
-                output += f"  - {fk['source_table']}.{fk['source_column']} → {fk['target_table']}.{fk['target_column']} (score: {fk['score']:.2f})\n"
+        # PERSIST TO NEO4J - THIS WAS THE MISSING FIX!
+        discovered_fks = result.get("discovered_fks", [])
+        
+        if discovered_fks:
+            try:
+                neo4j = get_neo4j()
+                builder = GraphBuilder(neo4j)
+                builder.clear_graph()
+                
+                tables_added = set()
+                fks_added = 0
+                
+                for fk in discovered_fks:
+                    if "relationship" in fk:
+                        rel = fk["relationship"]
+                        parts = rel.split(" → ")
+                        src_parts = parts[0].split(".")
+                        tgt_parts = parts[1].split(".")
+                        
+                        src_table, src_col = src_parts[0], src_parts[1]
+                        tgt_table, tgt_col = tgt_parts[0], tgt_parts[1]
+                        confidence = fk.get("confidence", 1.0)
+                        cardinality = fk.get("cardinality", "1:N")
+                    else:
+                        src_table = fk.get("source_table")
+                        src_col = fk.get("source_column")
+                        tgt_table = fk.get("target_table")
+                        tgt_col = fk.get("target_column")
+                        confidence = fk.get("score", fk.get("confidence", 1.0))
+                        cardinality = fk.get("cardinality", "1:N")
+                    
+                    if src_table and src_table not in tables_added:
+                        builder.add_table(src_table)
+                        tables_added.add(src_table)
+                    if tgt_table and tgt_table not in tables_added:
+                        builder.add_table(tgt_table)
+                        tables_added.add(tgt_table)
+                    
+                    if src_table and src_col and tgt_table and tgt_col:
+                        builder.add_fk_relationship(
+                            src_table, src_col, tgt_table, tgt_col,
+                            float(confidence), str(cardinality)
+                        )
+                        fks_added += 1
+                
+                output += f"### ✓ Persisted to Neo4j\n"
+                output += f"- Tables added: {len(tables_added)}\n"
+                output += f"- FK relationships added: {fks_added}\n\n"
+                
+            except Exception as e:
+                import traceback
+                output += f"### ⚠ Neo4j Error: {e}\n"
+                output += f"```\n{traceback.format_exc()}\n```\n\n"
+        
+        output += "### Discovered Foreign Keys\n\n"
+        if discovered_fks:
+            for fk in discovered_fks:
+                if "relationship" in fk:
+                    output += f"**{fk['relationship']}**\n"
+                    output += f"  - Confidence: {fk.get('confidence', 1.0):.1%}\n"
+                    output += f"  - Cardinality: {fk.get('cardinality', 'unknown')}\n"
+                    scores = fk.get("scores", {})
+                    if scores:
+                        output += f"  - Match rate: {scores.get('match_rate', 0):.1%}\n"
+                else:
+                    output += f"**{fk.get('source_table')}.{fk.get('source_column')} → {fk.get('target_table')}.{fk.get('target_column')}**\n"
+                    output += f"  - Score: {fk.get('score', fk.get('confidence', 1.0)):.2f}\n"
+                output += "\n"
+        else:
+            output += "No foreign keys discovered.\n"
         
         return output
+        
     except Exception as e:
         import traceback
         return f"ERROR: {type(e).__name__}: {e}\n{traceback.format_exc()}"
 
 
 def impl_analyze_potential_fk(source_table: str, source_column: str, target_table: str, target_column: str) -> str:
-    """Analyze if a column pair could be a FK. Checks types, names, cardinality."""
+    """Analyze if a column pair could be a FK."""
     pg = get_pg()
     
     try:
+        source_schema = pg.get_table_schema(source_table)
+        target_schema = pg.get_table_schema(target_table)
+        
+        source_cols = {c["column_name"]: c for c in source_schema["columns"]}
+        target_cols = {c["column_name"]: c for c in target_schema["columns"]}
+        
+        if source_column not in source_cols:
+            return f"Error: Column '{source_column}' not found in '{source_table}'. Available: {list(source_cols.keys())}"
+        
+        if target_column not in target_cols:
+            return f"Error: Column '{target_column}' not found in '{target_table}'. Available: {list(target_cols.keys())}"
+        
         source_stats = pg.get_column_statistics(source_table, source_column)
         target_stats = pg.get_column_statistics(target_table, target_column)
-        source_meta = pg.get_table_metadata(source_table)
-        target_meta = pg.get_table_metadata(target_table)
         
-        source_col = next((c for c in source_meta.columns if c.column_name == source_column), None)
-        target_col = next((c for c in target_meta.columns if c.column_name == target_column), None)
+        source_col_info = source_cols[source_column]
+        target_col_info = target_cols[target_column]
         
-        if not source_col or not target_col:
-            return f"Error: Column not found"
-        
-        # Basic analysis
-        type_compatible = source_col.data_type == target_col.data_type
+        type_compatible = source_col_info["data_type"] == target_col_info["data_type"]
         target_unique = target_stats.uniqueness_ratio > 0.95
         
         output = f"Analysis: {source_table}.{source_column} → {target_table}.{target_column}\n"
+        output += f"  Source type: {source_col_info['data_type']}\n"
+        output += f"  Target type: {target_col_info['data_type']}\n"
         output += f"  Type compatible: {type_compatible}\n"
         output += f"  Target uniqueness: {target_stats.uniqueness_ratio:.1%}\n"
         output += f"  Source distinct: {source_stats.distinct_count}\n"
@@ -482,6 +559,8 @@ def impl_clear_neo4j_graph() -> str:
 
 def impl_add_fk_to_graph(source_table: str, source_column: str, target_table: str, target_column: str, score: float = 1.0, cardinality: str = "1:N") -> str:
     builder = GraphBuilder(get_neo4j())
+    builder.add_table(source_table)
+    builder.add_table(target_table)
     builder.add_fk_relationship(source_table, source_column, target_table, target_column, score, cardinality)
     return f"✓ Added: {source_table}.{source_column} → {target_table}.{target_column}"
 
@@ -1081,8 +1160,8 @@ def impl_show_ltn_knowledge_base() -> str:
     if not LTN_AVAILABLE:
         return "LTN not available."
     try:
-        kb = LTNKnowledgeBase.create_default()  # ✅ Use class method
-        data = kb.to_dict()                      # ✅ Use existing method
+        kb = LTNKnowledgeBase.create_default()
+        data = kb.to_dict()
         output = "## LTN Knowledge Base\n"
         output += f"- Axioms: {len(data.get('axioms', []))}\n"
         output += f"- Constraints: {len(data.get('constraints', []))}\n"
@@ -1247,21 +1326,15 @@ STREAMING_TOOL_FUNCTIONS = {
 # =============================================================================
 
 def stream_agent_response(client: anthropic.Anthropic, messages: List[Dict], message_placeholder) -> str:
-    """
-    Stream response from Claude with tool execution, updating the Streamlit placeholder in real-time.
-    
-    Returns the final complete response text.
-    """
+    """Stream response from Claude with tool execution."""
     full_response = ""
     tool_results_log = []
     
-    # Agentic loop - keep going until no more tool calls
     while True:
         tool_inputs = {}
         current_block_id = None
         current_response_content = []
         
-        # Stream the response
         with client.messages.stream(
             model="claude-sonnet-4-20250514",
             max_tokens=8192,
@@ -1277,7 +1350,6 @@ def stream_agent_response(client: anthropic.Anthropic, messages: List[Dict], mes
                             "name": event.content_block.name,
                             "input": ""
                         }
-                        # Show tool being called
                         full_response += f"\n\n🔧 **Calling: {event.content_block.name}**\n"
                         message_placeholder.markdown(full_response + "▌")
                         
@@ -1292,18 +1364,14 @@ def stream_agent_response(client: anthropic.Anthropic, messages: List[Dict], mes
                 elif event.type == "content_block_stop":
                     current_block_id = None
             
-            # Get the final message
             response = stream.get_final_message()
             current_response_content = response.content
         
-        # Add assistant message to history
         messages.append({"role": "assistant", "content": current_response_content})
         
-        # Check if we need to execute tools
         if response.stop_reason != "tool_use":
             break
         
-        # Execute tool calls
         tool_results = []
         for block in current_response_content:
             if block.type == "tool_use":
@@ -1319,7 +1387,6 @@ def stream_agent_response(client: anthropic.Anthropic, messages: List[Dict], mes
                 else:
                     result = f"Unknown tool: {block.name}"
                 
-                # Show tool result
                 full_response += f"\n```\n{result}\n```\n"
                 message_placeholder.markdown(full_response + "▌")
                 tool_results_log.append({"tool": block.name, "result": result})
@@ -1330,10 +1397,8 @@ def stream_agent_response(client: anthropic.Anthropic, messages: List[Dict], mes
                     "content": result
                 })
         
-        # Add tool results to messages for next iteration
         messages.append({"role": "user", "content": tool_results})
     
-    # Remove cursor and return final response
     message_placeholder.markdown(full_response)
     return full_response
 
@@ -1360,11 +1425,9 @@ def main():
     st.title("🕸️ GraphWeaver Agent")
     st.caption("Chat with Claude to discover FK relationships, build knowledge graphs, and analyze data lineage")
     
-    # Sidebar for configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # API Key
         api_key = st.text_input(
             "Anthropic API Key",
             type="password",
@@ -1374,7 +1437,6 @@ def main():
         if api_key:
             st.session_state.anthropic_api_key = api_key
         
-        # Streaming toggle
         st.session_state.use_streaming = st.toggle(
             "🔴 Enable Streaming",
             value=st.session_state.get("use_streaming", True),
@@ -1383,7 +1445,6 @@ def main():
         
         st.divider()
         
-        # Database Configuration
         st.subheader("🗄️ PostgreSQL")
         pg_host = st.text_input("Host", value=st.session_state.get("pg_host", os.environ.get("POSTGRES_HOST", "localhost")))
         pg_port = st.number_input("Port", value=int(st.session_state.get("pg_port", os.environ.get("POSTGRES_PORT", "5432"))), min_value=1, max_value=65535)
@@ -1403,7 +1464,6 @@ def main():
         
         st.divider()
         
-        # Neo4j Configuration
         st.subheader("🔵 Neo4j")
         neo4j_uri = st.text_input("URI", value=st.session_state.get("neo4j_uri", os.environ.get("NEO4J_URI", "bolt://localhost:7687")))
         neo4j_user = st.text_input("Neo4j User", value=st.session_state.get("neo4j_user", os.environ.get("NEO4J_USER", "neo4j")))
@@ -1419,7 +1479,6 @@ def main():
         
         st.divider()
         
-        # Quick Actions
         st.subheader("🚀 Quick Actions")
         if st.button("🔍 Discover FKs", use_container_width=True):
             st.session_state.quick_action = "Discover all foreign key relationships in the database"
@@ -1432,30 +1491,25 @@ def main():
         
         st.divider()
         
-        # Clear chat button
         if st.button("🗑️ Clear Chat", use_container_width=True):
             st.session_state.messages = []
             st.session_state.streaming_messages = []
             st.rerun()
     
-    # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
     if "streaming_messages" not in st.session_state:
         st.session_state.streaming_messages = []
     
-    # Check for API key
     if not st.session_state.get("anthropic_api_key") and not os.environ.get("ANTHROPIC_API_KEY"):
         st.warning("⚠️ Please enter your Anthropic API key in the sidebar to start chatting.")
         st.stop()
     
-    # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Handle quick actions
     if "quick_action" in st.session_state and st.session_state.quick_action:
         prompt = st.session_state.quick_action
         st.session_state.quick_action = None
@@ -1463,43 +1517,33 @@ def main():
         prompt = st.chat_input("Ask me about your database...")
     
     if prompt:
-        # Add user message to chat
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Get agent response
         with st.chat_message("assistant"):
             try:
                 if st.session_state.get("use_streaming", True):
-                    # STREAMING MODE
                     client = get_anthropic_client()
                     if client is None:
                         st.error("Failed to create Anthropic client. Please check your API key.")
                         st.stop()
                     
-                    # Build messages for API
                     st.session_state.streaming_messages.append({"role": "user", "content": prompt})
-                    
-                    # Create placeholder for streaming
                     message_placeholder = st.empty()
                     
-                    # Stream response
                     response = stream_agent_response(
                         client, 
                         st.session_state.streaming_messages.copy(),
                         message_placeholder
                     )
                     
-                    # Update chat history
                     st.session_state.messages.append({"role": "assistant", "content": response})
                     st.session_state.streaming_messages.append({"role": "assistant", "content": response})
                     
-                    # Keep history manageable
                     if len(st.session_state.streaming_messages) > 20:
                         st.session_state.streaming_messages = st.session_state.streaming_messages[-20:]
                 else:
-                    # NON-STREAMING MODE (fallback to LangChain)
                     with st.spinner("Thinking..."):
                         from langgraph.prebuilt import create_react_agent
                         
@@ -1509,7 +1553,6 @@ def main():
                             max_tokens=8192,
                         )
                         
-                        # Create tools list (simplified for non-streaming)
                         tools = [
                             test_database_connection_tool,
                             list_database_tables_tool,
@@ -1523,7 +1566,6 @@ def main():
                             config={"recursion_limit": 100}
                         )
                         
-                        # Extract response
                         messages = result.get("messages", [])
                         if messages:
                             last_msg = messages[-1]
@@ -1541,7 +1583,6 @@ def main():
                 st.session_state.messages.append({"role": "assistant", "content": f"Error: {e}"})
 
 
-# Tool wrappers for non-streaming mode
 @tool
 def test_database_connection_tool() -> str:
     """Test connection to PostgreSQL database."""

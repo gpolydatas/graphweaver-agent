@@ -66,6 +66,13 @@ class GraphBuilder:
     def add_fk_relationship(self, source_table: str, source_col: str,
                            target_table: str, target_col: str,
                            score: float, cardinality: str):
+        # First ensure both tables exist
+        self.client.run_write("""
+            MERGE (st:Table {name: $src_table})
+            MERGE (tt:Table {name: $tgt_table})
+        """, {"src_table": source_table, "tgt_table": target_table})
+        
+        # Then create columns and FK relationship
         self.client.run_write("""
             MATCH (st:Table {name: $src_table})
             MATCH (tt:Table {name: $tgt_table})
